@@ -1,0 +1,176 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VALORANT CN Rank Overlay</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+    body {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      padding: 8px;
+    }
+    .rank-card {
+      position: relative;
+      width: 404px;
+      height: 100px;
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      grid-template-rows: 55px 37px;
+      filter: drop-shadow(0 4px 9px rgba(0,0,0,.35));
+    }
+    .rank-badge {
+      grid-row: 1 / 3;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: -10px;
+    }
+    #rank-icon {
+      width: 78px;
+      height: 78px;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 2px rgba(0,0,0,.5));
+    }
+    .rank-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 15px 6px 19px;
+      border-radius: 8px 8px 0 0;
+      background: linear-gradient(105deg, rgba(250,174,198,.97), rgba(255,199,213,.97));
+      color: #24202b;
+      border-left: 5px solid rgba(255,255,255,.75);
+    }
+    #rank-name {
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+      text-shadow: 0 1px rgba(255,255,255,.5);
+    }
+    #rr-value {
+      font-size: 18px;
+      font-weight: 800;
+      white-space: nowrap;
+      opacity: .9;
+    }
+    .stale-indicator {
+      margin-left: auto;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: transparent;
+    }
+    .rank-card.stale .stale-indicator {
+      background: #ffd45a;
+      box-shadow: 0 0 7px rgba(255,212,90,.9);
+    }
+    .rank-sub {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px 0 18px;
+      border-radius: 0 0 8px 8px;
+      background: rgba(16,18,27,.93);
+      border-left: 5px solid #f3a8bd;
+      color: white;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    #today-record { white-space: nowrap; }
+    #last-change {
+      min-width: 116px;
+      padding: 4px 9px;
+      border-radius: 5px;
+      text-align: center;
+      background: rgba(255,79,91,.95);
+      white-space: nowrap;
+    }
+    #last-change.positive { background: rgba(71,190,126,.95); }
+    #last-change.neutral { background: rgba(100,105,119,.95); }
+    .partial::after { content: "+"; opacity: .7; }
+  </style>
+</head>
+<body>
+  <div class="rank-card" id="rank-card">
+    <div class="rank-badge">
+      <img id="rank-icon" alt="段位图标">
+    </div>
+    <div class="rank-main">
+      <span id="rank-name">--</span>
+      <span id="rr-value">-- RR</span>
+      <span class="stale-indicator" title="数据暂时未更新"></span>
+    </div>
+    <div class="rank-sub">
+      <span id="today-record">0 Win / 0 Loss</span>
+      <span id="last-change" class="neutral">Last Match: --</span>
+    </div>
+  </div>
+
+  <script>
+    const card = document.getElementById('rank-card');
+    const icon = document.getElementById('rank-icon');
+    const rankName = document.getElementById('rank-name');
+    const rrValue = document.getElementById('rr-value');
+    const todayRecord = document.getElementById('today-record');
+    const lastChange = document.getElementById('last-change');
+
+    function safeText(value, fallback='--') {
+      return value === null || value === undefined || value === '' ? fallback : String(value);
+    }
+
+    function applyState(data) {
+      rankName.textContent = safeText(data.rank);
+      rrValue.textContent = `${safeText(data.rr)} RR`;
+      todayRecord.textContent = `${Number(data.today_wins || 0)} Win / ${Number(data.today_losses || 0)} Loss`;
+      todayRecord.classList.toggle('partial', Boolean(data.today_partial));
+      card.classList.toggle('stale', Boolean(data.stale));
+
+      if (data.rank_icon) {
+        icon.src = data.rank_icon;
+        icon.style.visibility = 'visible';
+      } else {
+        icon.removeAttribute('src');
+        icon.style.visibility = 'hidden';
+      }
+
+      const change = safeText(data.last_rr_change);
+      lastChange.textContent = `Last Match: ${change === '--' ? '--' : `${change}pts`}`;
+      lastChange.classList.remove('positive', 'neutral');
+      if (change.startsWith('+')) lastChange.classList.add('positive');
+      else if (change === '--' || change === '0') lastChange.classList.add('neutral');
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch('/api/state', {cache: 'no-store'});
+        if (!response.ok) return;
+        applyState(await response.json());
+      } catch (_) {
+        card.classList.add('stale');
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

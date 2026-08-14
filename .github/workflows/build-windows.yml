@@ -1,0 +1,53 @@
+name: Build Windows x64
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+
+      - name: Test
+        shell: pwsh
+        run: go test ./...
+
+      - name: Build Windows x64
+        shell: pwsh
+        run: go build -trimpath -ldflags "-s -w" -o ValorantCNOverlay.exe ./src/cmd/valorant-overlay
+
+      - name: Assemble portable ZIP
+        shell: pwsh
+        run: |
+          $root = "dist/Valorant-CN-OBS-Overlay"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          Copy-Item ValorantCNOverlay.exe $root/
+          Copy-Item "启动段位Overlay.bat","重新登录.bat","诊断.bat",README.md,LICENSE,THIRD_PARTY_NOTICES.md,VERSION,.gitignore,go.mod $root/
+          Copy-Item src,scripts,licenses,.github $root/ -Recurse
+          $hash = (Get-FileHash "$root/ValorantCNOverlay.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ValorantCNOverlay.exe" | Set-Content -Encoding ascii "$root/CHECKSUMS.sha256"
+          Compress-Archive -Path $root -DestinationPath "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Valorant-CN-OBS-Overlay-Windows-x64
+          path: dist/Valorant-CN-OBS-Overlay-Windows-x64.zip
+
+      - name: Publish GitHub Release for tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" --generate-notes --title "${{ github.ref_name }}"

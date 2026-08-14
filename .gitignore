@@ -1,0 +1,17 @@
+# Runtime state / sensitive local data
+.data/
+tmp/
+debug/
+
+# Build output
+build/
+dist/
+*.zip
+*.exe
+CHECKSUMS.sha256
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
