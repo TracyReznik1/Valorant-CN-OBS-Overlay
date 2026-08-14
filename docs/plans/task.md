@@ -1,7 +1,7 @@
 | Task | Status | Details |
 |---|---|---|
-| Initialize Git repository | In Progress | git init, set branch to main |
-| Configure .gitignore for build artifacts | Pending | Ensure .exe and temporary files are ignored |
-| Add files and make initial commit | Pending | git add ., commit initial project code |
-| Set remote and push to GitHub | Pending | Add remote https://github.com/TracyReznik1/Valorant-CN-OBS-Overlay, push main |
-| Verify remote branch status | Pending | Confirm git status and remote tracking |
+| Initialize Git repository | Completed | Initialized repo with main branch |
+| Configure .gitignore for build artifacts | Completed | Added *.exe and CHECKSUMS.sha256 to .gitignore |
+| Add files and make initial commit | Completed | Committed all source and documentation files |
+| Set remote and push to GitHub | Completed | Added origin remote and pushed to main branch |
+| Verify remote branch status | Completed | Working tree clean and synced with origin/main |
