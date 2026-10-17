@@ -120,6 +120,24 @@ func setHeaders(req *http.Request, headers map[string]string) {
 	}
 }
 
+type httpStatusError int
+
+func (e httpStatusError) Error() string { return fmt.Sprintf("HTTP %d", int(e)) }
+
+func safeRequestError(err error) string {
+	var status httpStatusError
+	if errors.As(err, &status) {
+		return status.Error()
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return "请求超时"
+	}
+	// url.Error includes the full request URL, including QQ authorization
+	// queries. Neither arbitrary transport errors nor URLs are public data.
+	return "网络请求或响应读取失败"
+}
+
 func readHTTP(resp *http.Response) ([]byte, error) {
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
@@ -127,7 +145,8 @@ func readHTTP(resp *http.Response) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		// Error bodies may echo credentials. Only expose the HTTP status.
+		return nil, httpStatusError(resp.StatusCode)
 	}
 	return b, nil
 }
@@ -236,11 +255,11 @@ func (p *Probe) QQLogin() (Credentials, error) {
 	headers := loginHeaders()
 	resp, err := p.do(http.MethodGet, loginURLTemplate, headers, nil)
 	if err != nil {
-		return Credentials{}, &ProbeError{"qq_xlogin", "QQ 登录页请求失败: " + err.Error()}
+		return Credentials{}, &ProbeError{"qq_xlogin", "QQ 登录页请求失败: " + safeRequestError(err)}
 	}
 	loginBytes, err := readHTTP(resp)
 	if err != nil {
-		return Credentials{}, &ProbeError{"qq_xlogin", "QQ 登录页请求失败: " + err.Error()}
+		return Credentials{}, &ProbeError{"qq_xlogin", "QQ 登录页请求失败: " + safeRequestError(err)}
 	}
 	loginPage := string(loginBytes)
 	loginSig := p.cookieValue("pt_login_sig")
@@ -264,11 +283,11 @@ func (p *Probe) QQLogin() (Credentials, error) {
 	qrHeaders["Accept"] = "image/*"
 	qrResp, err := p.do(http.MethodGet, ptqrShowURL+"?"+q.Encode(), qrHeaders, nil)
 	if err != nil {
-		return Credentials{}, &ProbeError{"qq_qr_request", "二维码请求失败: " + err.Error()}
+		return Credentials{}, &ProbeError{"qq_qr_request", "二维码请求失败: " + safeRequestError(err)}
 	}
 	qrBytes, err := readHTTP(qrResp)
 	if err != nil {
-		return Credentials{}, &ProbeError{"qq_qr_request", "二维码请求失败: " + err.Error()}
+		return Credentials{}, &ProbeError{"qq_qr_request", "二维码请求失败: " + safeRequestError(err)}
 	}
 	qrsig := p.cookieValue("qrsig")
 	if qrsig == "" || len(qrBytes) == 0 {
@@ -300,11 +319,11 @@ func (p *Probe) QQLogin() (Credentials, error) {
 		pollHeaders := map[string]string{"User-Agent": userAgent + " tencent_game_emulator", "Referer": loginURLTemplate, "Accept": "*/*", "X-Requested-With": "com.tencent.apps.valorant"}
 		pr, err := p.do(http.MethodGet, ptqrLoginURL+"?"+params.Encode(), pollHeaders, nil)
 		if err != nil {
-			return Credentials{}, &ProbeError{"qq_poll", "扫码状态查询失败: " + err.Error()}
+			return Credentials{}, &ProbeError{"qq_poll", "扫码状态查询失败: " + safeRequestError(err)}
 		}
 		pb, err := readHTTP(pr)
 		if err != nil {
-			return Credentials{}, &ProbeError{"qq_poll", "扫码状态查询失败: " + err.Error()}
+			return Credentials{}, &ProbeError{"qq_poll", "扫码状态查询失败: " + safeRequestError(err)}
 		}
 		cb, ok := parsePTUICallback(string(pb))
 		if !ok {
@@ -346,17 +365,17 @@ func (p *Probe) resolveCheckSig(successURL, referer string) (map[string]string, 
 		}
 		req, err := http.NewRequest(http.MethodGet, current, nil)
 		if err != nil {
-			return nil, &ProbeError{"qq_check_sig", "QQ 授权跳转失败: " + err.Error()}
+			return nil, &ProbeError{"qq_check_sig", "QQ 授权跳转失败: " + safeRequestError(err)}
 		}
 		setHeaders(req, map[string]string{"User-Agent": userAgent, "Accept": "*/*", "Referer": referer})
 		resp, err := noRedirect.Do(req)
 		if err != nil && !errors.Is(err, http.ErrUseLastResponse) {
-			return nil, &ProbeError{"qq_check_sig", "QQ 授权跳转失败: " + err.Error()}
+			return nil, &ProbeError{"qq_check_sig", "QQ 授权跳转失败: " + safeRequestError(err)}
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			return nil, &ProbeError{"qq_check_sig", "QQ 授权跳转失败: " + readErr.Error()}
+			return nil, &ProbeError{"qq_check_sig", "QQ 授权跳转失败: " + safeRequestError(readErr)}
 		}
 		if loc := strings.TrimSpace(resp.Header.Get("Location")); loc != "" {
 			if !strings.HasPrefix(loc, "http://") && !strings.HasPrefix(loc, "https://") && !strings.HasPrefix(loc, "auth://") {
@@ -393,29 +412,30 @@ func (p *Probe) apiPost(path string, creds Credentials, body map[string]any, sta
 	headers := map[string]string{"Accept": "*/*", "Accept-Language": "zh-CN,zh;q=0.9", "Content-Type": "application/json", "User-Agent": userAgent, "Connection": "keep-alive", "Cookie": buildAuthCookie(creds, realToken)}
 	resp, err := p.do(http.MethodPost, p.cfg.APIBase+path, headers, strings.NewReader(string(raw)))
 	if err != nil {
-		return nil, &ProbeError{stage, "掌瓦接口请求失败: " + err.Error()}
+		return nil, &ProbeError{stage, "掌瓦接口请求失败: " + safeRequestError(err)}
 	}
 	b, err := readHTTP(resp)
 	if err != nil {
-		return nil, &ProbeError{stage, "掌瓦接口请求失败: " + err.Error()}
+		return nil, &ProbeError{stage, "掌瓦接口请求失败: " + safeRequestError(err)}
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(b, &payload); err != nil {
 		return nil, &ProbeError{stage, "掌瓦接口返回了无法识别的数据结构"}
 	}
-	result := int64(0)
-	if v := payload["result"]; v != nil {
-		f, _ := strconv.ParseFloat(stringValue(v), 64)
-		result = int64(f)
+	result := rrInteger(payload["result"], true)
+	if result == "" {
+		return nil, &ProbeError{stage, "掌瓦接口响应缺少有效 result 状态码"}
 	}
-	if result != 0 {
-		msg := stringValue(firstMapValue(payload, "errMsg", "msg"))
-		if msg == "" {
-			msg = fmt.Sprintf("错误码 %d", result)
-		}
-		return nil, &ProbeError{stage, msg}
+	if result != "0" {
+		// Do not expose arbitrary server messages, which may contain secrets.
+		return nil, &ProbeError{stage, "掌瓦接口错误码 " + result}
 	}
-	return payload["data"], nil
+	switch payload["data"].(type) {
+	case map[string]any, []any:
+		return payload["data"], nil
+	default:
+		return nil, &ProbeError{stage, "掌瓦接口响应缺少有效 data 对象或列表"}
+	}
 }
 
 func (p *Probe) FetchMainRole(c Credentials) (any, error) {
@@ -448,22 +468,22 @@ func (p *Probe) exchangeMVAL(openid, access string) (Credentials, error) {
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦登录态交换失败: " + err.Error()}
+		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦登录态交换失败: " + safeRequestError(err)}
 	}
 	b, err := readHTTP(resp)
 	if err != nil {
-		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦登录态交换失败: " + err.Error()}
+		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦登录态交换失败: " + safeRequestError(err)}
 	}
 	var data map[string]any
 	if json.Unmarshal(b, &data) != nil {
 		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦登录态交换返回无效 JSON"}
 	}
 	if stringValue(data["result"]) != "0" {
-		msg := stringValue(firstMapValue(data, "msg", "errMsg"))
-		if msg == "" {
-			msg = "未知错误"
+		code := rrInteger(data["result"], true)
+		if code == "" {
+			code = "未知"
 		}
-		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦拒绝登录态交换: " + msg}
+		return Credentials{}, &ProbeError{"mval_exchange", "掌瓦拒绝登录态交换，错误码 " + code}
 	}
 	info := mapValue(mapValue(data["data"])["login_info"])
 	if info == nil {

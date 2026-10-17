@@ -35,7 +35,7 @@ jobs:
           New-Item -ItemType Directory -Force $root | Out-Null
           Copy-Item ValorantCNOverlay.exe $root/
           Copy-Item "启动段位Overlay.bat","重新登录.bat","诊断.bat",README.md,LICENSE,THIRD_PARTY_NOTICES.md,VERSION,.gitignore,go.mod $root/
-          Copy-Item src,scripts,licenses,.github $root/ -Recurse
+          Copy-Item src,scripts,licenses,.github,docs $root/ -Recurse
           $hash = (Get-FileHash "$root/ValorantCNOverlay.exe" -Algorithm SHA256).Hash.ToLower()
           "$hash  ValorantCNOverlay.exe" | Set-Content -Encoding ascii "$root/CHECKSUMS.sha256"
           Compress-Archive -Path $root -DestinationPath "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" -Force
@@ -50,4 +50,10 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" --generate-notes --title "${{ github.ref_name }}"
+        run: |
+          $notes = "docs/releases/${{ github.ref_name }}.md"
+          if (Test-Path $notes) {
+            gh release create "${{ github.ref_name }}" "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" --notes-file $notes --title "${{ github.ref_name }}"
+          } else {
+            gh release create "${{ github.ref_name }}" "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" --generate-notes --title "${{ github.ref_name }}"
+          }

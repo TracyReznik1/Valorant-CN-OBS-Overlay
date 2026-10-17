@@ -58,7 +58,7 @@ func TestCredentialStoreRoundTripIsProtected(t *testing.T) {
 
 func TestOverlayHTTPExposesOnlyPublicState(t *testing.T) {
 	state := NewOverlayState()
-	state.Update(OverlaySnapshot{Rank: "铂金I", RR: "82", TodayWins: 2, TodayLosses: 1, LastRRChange: "-18"})
+	state.Update(OverlaySnapshot{Rank: "铂金I", RR: "82", RRSource: "source[1].card.left_data.title", TodayWins: 2, TodayLosses: 1, LastRRChange: "-18"})
 	srv := httptest.NewServer(NewOverlayHandler(state))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/state")
@@ -71,7 +71,7 @@ func TestOverlayHTTPExposesOnlyPublicState(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["rank"] != "铂金I" || got["rr"] != "82" {
+	if got["rank"] != "铂金I" || got["rr"] != "82" || got["rr_source"] != "source[1].card.left_data.title" {
 		t.Fatalf("state=%v", got)
 	}
 	for _, secret := range []string{"access_token", "openid", "tid", "cookie"} {

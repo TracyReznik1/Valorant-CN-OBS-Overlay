@@ -1,0 +1,27 @@
+{
+  "synthetic": true,
+  "description": "Synthetic display-only inputs on existing API paths. Rank and RR are independent API values; these cases do not claim promotion eligibility or live high-rank response captures.",
+  "sources": ["title_points", "title_rr", "role_number", "role_string", "card_number", "card_string"],
+  "groups": [
+    {
+      "id": "unranked",
+      "ranks": ["未定级"],
+      "points": [0]
+    },
+    {
+      "id": "ordinary",
+      "ranks": ["黑铁I", "黑铁II", "黑铁III", "青铜I", "青铜II", "青铜III", "白银I", "白银II", "白银III", "黄金I", "黄金II", "黄金III", "铂金I", "铂金II", "铂金III", "钻石I", "钻石II", "钻石III", "超凡I", "超凡II", "超凡III"],
+      "points": [0, 1, 9, 10, 11, 50, 82, 99, 100]
+    },
+    {
+      "id": "immortal",
+      "ranks": ["神话I", "神话II", "神话III"],
+      "points": [0, 1, 9, 10, 11, 80, 99, 100, 185, 350, 999]
+    },
+    {
+      "id": "radiant",
+      "ranks": ["辐能战魂", "无畏战魂"],
+      "points": [0, 1, 9, 10, 99, 100, 350, 999, 1000, 1001, 1250, 1999, 9999]
+    }
+  ]
+}

@@ -15,6 +15,8 @@ var overlayHTML []byte
 type OverlaySnapshot struct {
 	Rank         string `json:"rank"`
 	RR           string `json:"rr"`
+	RRSource     string `json:"rr_source,omitempty"`
+	Warning      string `json:"warning,omitempty"`
 	TodayWins    int    `json:"today_wins"`
 	TodayLosses  int    `json:"today_losses"`
 	LastResult   string `json:"last_result"`

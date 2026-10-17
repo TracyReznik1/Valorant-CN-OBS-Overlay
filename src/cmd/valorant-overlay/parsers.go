@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -24,15 +25,11 @@ type PTUICallback struct {
 }
 
 type RoleSnapshot struct {
-	RoleName        string
-	TierText        string
-	GameRoleID      string
-	GameOpenID      string
-	Scene           string
-	RoleLevel       any
-	CompetitiveTier any
-	LeaguePoint     any
-	Raw             map[string]any
+	RoleName   string
+	TierText   string
+	GameRoleID string
+	Scene      string
+	Raw        map[string]any
 }
 
 type TodaySummary struct{ Wins, Losses, Games int }
@@ -213,42 +210,77 @@ func parseRoleSnapshot(data any) RoleSnapshot {
 	}
 	return RoleSnapshot{
 		RoleName: stringValue(first("role_name", "name")), TierText: stringValue(first("tier_text", "tier")),
-		GameRoleID: stringValue(first("game_role_id", "role_id")), GameOpenID: stringValue(role["game_open_id"]),
-		Scene: stringValue(role["scene"]), RoleLevel: first("role_level", "level"), CompetitiveTier: role["competitive_tier"],
-		LeaguePoint: role["league_point"], Raw: role,
+		GameRoleID: stringValue(first("game_role_id", "role_id")),
+		Scene:      stringValue(role["scene"]), Raw: role,
 	}
 }
 
-func candidateMatchList(data any) []map[string]any {
-	out := []map[string]any{}
-	appendList := func(v any) bool {
-		items := anyList(v)
-		if items == nil {
-			return false
+// Numeric suffixes in a card title are RR, not a guessed division: parsing
+// "辐能战魂 1250分" must not consume the leading 1 as part of the rank name.
+const rankNamePattern = `(?:未定级|未评级|无段位|辐能战魂|无畏战魂|(?:黑铁|青铜|白银|黄金|铂金|钻石|超凡|神话)(?:\s*(?:III|II|I|Ⅲ|Ⅱ|Ⅰ))?)`
+
+var rankNameRE = regexp.MustCompile(`(?i)^` + rankNamePattern + `$`)
+var rankTitleRE = regexp.MustCompile(`(?i)^(` + rankNamePattern + `)(?:\s*[0-9]+\s*(?:分|RR))?$`)
+
+func validRankName(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	text = strings.TrimSpace(text)
+	if !rankNameRE.MatchString(text) {
+		return ""
+	}
+	return text
+}
+
+func extractCurrentRank(role RoleSnapshot, card any) string {
+	// tier can be an enum (observed: 255 for this unranked account), not a
+	// display name. Never guess its mapping from a number alone.
+	for _, value := range []any{role.Raw["tier_text"], role.Raw["tier"], role.TierText} {
+		if name := validRankName(value); name != "" {
+			return name
 		}
-		for _, item := range items {
-			if m := mapValue(item); m != nil {
-				out = append(out, m)
+	}
+	left := mapValue(mapValue(mapValue(card)["card"])["left_data"])
+	title, _ := left["title"].(string)
+	if match := rankTitleRE.FindStringSubmatch(strings.TrimSpace(title)); len(match) > 1 {
+		return validRankName(match[1])
+	}
+	return ""
+}
+
+func isUnranked(rank string) bool {
+	return rank == "未定级" || rank == "未评级" || rank == "无段位"
+}
+
+// Distinguish a genuine empty list from an unrecognised response, otherwise
+// schema changes silently replace cached wins/losses with 0/0.
+func parseMatchList(data any) ([]map[string]any, bool) {
+	items := anyList(data)
+	if items == nil {
+		m := mapValue(data)
+		for _, k := range []string{"battle_list", "list", "records", "matches"} {
+			if items = anyList(m[k]); items != nil {
+				break
 			}
 		}
-		return true
-	}
-	if appendList(data) {
-		return out
-	}
-	m := mapValue(data)
-	if m == nil {
-		return out
-	}
-	for _, k := range []string{"battle_list", "list", "records", "matches"} {
-		if appendList(m[k]) {
-			return out
+		if items == nil {
+			if nested := m["data"]; nested != nil {
+				return parseMatchList(nested)
+			}
+			return nil, false
 		}
 	}
-	if nested, ok := m["data"]; ok && nested != nil {
-		return candidateMatchList(nested)
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		m := mapValue(item)
+		if m == nil {
+			return nil, false
+		}
+		out = append(out, m)
 	}
-	return out
+	return out, true
 }
 
 func isCompetitiveMatch(match map[string]any) bool {
@@ -269,8 +301,8 @@ func firstMapValue(m map[string]any, keys ...string) any {
 	return nil
 }
 
-func findLatestCompetitiveMatch(data any) map[string]any {
-	for _, m := range candidateMatchList(data) {
+func findLatestCompetitiveMatch(matches []map[string]any) map[string]any {
+	for _, m := range matches {
 		if isCompetitiveMatch(m) {
 			return m
 		}
@@ -278,51 +310,37 @@ func findLatestCompetitiveMatch(data any) map[string]any {
 	return nil
 }
 
-func extractFirstValue(v any, keys []string) any {
+// RR and RR changes are integer counts. Never pass unrecognised API text
+// through to the overlay, or round a fraction/non-finite/overflowing number.
+func rrInteger(v any, signed bool) string {
+	var text string
 	switch x := v.(type) {
-	case map[string]any:
-		for _, k := range keys {
-			if val, ok := x[k]; ok && val != nil && stringValue(val) != "" {
-				return val
-			}
+	case string:
+		text = strings.TrimSpace(x)
+	case json.Number:
+		text = x.String()
+	case int, int32, int64:
+		text = stringValue(x)
+	case float32:
+		return rrInteger(float64(x), signed)
+	case float64:
+		// JSON numbers are decoded as float64. Keep only exactly representable
+		// integers; this is a representation limit, not a game-specific RR cap.
+		if math.IsNaN(x) || math.IsInf(x, 0) || math.Trunc(x) != x || math.Abs(x) > 1<<53-1 {
+			return ""
 		}
-		for _, val := range x {
-			if found := extractFirstValue(val, keys); found != nil && stringValue(found) != "" {
-				return found
-			}
-		}
-	case []any:
-		for _, val := range x {
-			if found := extractFirstValue(val, keys); found != nil && stringValue(found) != "" {
-				return found
-			}
-		}
-	}
-	return nil
-}
-
-func displayNumber(v any, signed bool) string {
-	if v == nil {
+		text = strconv.FormatFloat(x, 'f', 0, 64)
+	default:
 		return ""
 	}
-	text := strings.TrimSpace(stringValue(v))
-	if text == "" {
+	n, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || (!signed && n < 0) {
 		return ""
 	}
-	f, err := strconv.ParseFloat(text, 64)
-	if err != nil {
-		return text
+	if signed && n > 0 {
+		return "+" + strconv.FormatInt(n, 10)
 	}
-	var base string
-	if f == float64(int64(f)) {
-		base = strconv.FormatInt(int64(f), 10)
-	} else {
-		base = strconv.FormatFloat(f, 'f', -1, 64)
-	}
-	if signed && f > 0 {
-		return "+" + base
-	}
-	return base
+	return strconv.FormatInt(n, 10)
 }
 
 func extractRankIcon(source any) string {
@@ -383,13 +401,13 @@ func normalizedMatchResult(match map[string]any) string {
 	return raw
 }
 
-func summarizeToday(matches any, now time.Time) TodaySummary {
+func summarizeToday(matches []map[string]any, now time.Time) TodaySummary {
 	out := TodaySummary{}
 	y, m, d := now.Date()
 	loc := now.Location()
 	start := time.Date(y, m, d, 0, 0, 0, 0, loc)
 	end := start.Add(24 * time.Hour)
-	for _, match := range candidateMatchList(matches) {
+	for _, match := range matches {
 		if !isCompetitiveMatch(match) {
 			continue
 		}
@@ -416,66 +434,106 @@ func summarizeToday(matches any, now time.Time) TodaySummary {
 }
 
 func extractRRChange(match map[string]any) string {
-	if match == nil {
-		return ""
-	}
-	if tier := mapValue(match["competitive_tier"]); tier != nil {
-		if v := extractFirstValue(tier, rrChangeKeys); v != nil {
-			if r := displayNumber(v, true); r != "" {
+	for _, scope := range []map[string]any{mapValue(match["competitive_tier"]), match} {
+		for _, key := range rrChangeKeys {
+			if r := rrInteger(scope[key], true); r != "" {
 				return r
-			}
-		}
-	}
-	return displayNumber(extractFirstValue(match, rrChangeKeys), true)
-}
-
-var rrTitleRE = regexp.MustCompile(`([0-9]{1,3})\s*分`)
-var rrSlashRE = regexp.MustCompile(`([0-9]{1,3})\s*/\s*100`)
-var rrTextRE = regexp.MustCompile(`(?i)([0-9]{1,3})\s*(RR|分)`)
-
-func extractCurrentRR(sources ...any) string {
-	for _, src := range sources {
-		if v := extractFirstValue(src, rrKeys); v != nil {
-			if r := displayNumber(v, false); r != "" {
-				return r
-			}
-		}
-	}
-	for _, src := range sources {
-		m := mapValue(src)
-		if m == nil {
-			continue
-		}
-		card := mapValue(m["card"])
-		if card == nil {
-			continue
-		}
-		left := mapValue(card["left_data"])
-		if left == nil {
-			continue
-		}
-		title := stringValue(left["title"])
-		if mm := rrTitleRE.FindStringSubmatch(title); len(mm) > 1 {
-			n, _ := strconv.Atoi(mm[1])
-			if n >= 0 && n <= 100 {
-				return strconv.Itoa(n)
-			}
-		}
-	}
-	for _, src := range sources {
-		d := extractFirstValue(src, []string{"rank_detail", "season_rank_detail"})
-		text := stringValue(d)
-		if text == "" {
-			continue
-		}
-		for _, re := range []*regexp.Regexp{rrSlashRE, rrTextRE} {
-			if mm := re.FindStringSubmatch(text); len(mm) > 1 {
-				n, _ := strconv.Atoi(mm[1])
-				if n >= 0 && n <= 100 {
-					return strconv.Itoa(n)
-				}
 			}
 		}
 	}
 	return ""
+}
+
+// Consume the full digit sequence and require boundaries: 1250 must never
+// become 250 or 50, nor may -18, 18.5, or the denominator of 82/100 become RR.
+var rrTextRE = regexp.MustCompile(`(?i)(^|[^0-9A-Za-z_+,./\-])([0-9]+)\s*(RR\b|分)(?:$|[^A-Za-z])`)
+var rrSlashRE = regexp.MustCompile(`(^|[^0-9A-Za-z_+,./\-])([0-9]+)\s*/\s*100(?:$|[^0-9A-Za-z_./])`)
+
+type rrScope struct {
+	path string
+	data map[string]any
+}
+
+type rrText struct {
+	path string
+	text string
+}
+
+func currentRRScopes(src any, index int) []rrScope {
+	m := mapValue(src)
+	path := fmt.Sprintf("source[%d]", index)
+	// Use exactly the same role selection as the service, never another game
+	// or another player's rating from the main-role list.
+	if anyList(src) != nil || (m != nil && anyList(m["list"]) != nil) {
+		m = parseRoleSnapshot(src).Raw
+		path += ".selected_role"
+	}
+	scopes := []rrScope{{path, m}}
+	if card := mapValue(m["card"]); card != nil {
+		scopes = append(scopes, rrScope{path + ".card", card})
+		if left := mapValue(card["left_data"]); left != nil {
+			scopes = append(scopes, rrScope{path + ".card.left_data", left})
+		}
+	}
+	return scopes
+}
+
+func extractCurrentRR(sources ...any) string {
+	rr, _ := extractCurrentRRWithSource(sources...)
+	return rr
+}
+
+func extractCurrentRRWithSource(sources ...any) (string, string) {
+	var scopes []rrScope
+	for i, src := range sources {
+		scopes = append(scopes, currentRRScopes(src, i)...)
+	}
+	// Preserve the existing structured-field precedence, but only in known
+	// current-player scopes. Invalid values must not block a valid fallback.
+	for _, scope := range scopes {
+		for _, key := range rrKeys {
+			if rr := rrInteger(scope.data[key], false); rr != "" {
+				return rr, scope.path + "." + key
+			}
+		}
+	}
+	var texts []rrText
+	for _, scope := range scopes {
+		if strings.HasSuffix(scope.path, ".card.left_data") {
+			text, _ := scope.data["title"].(string)
+			texts = append(texts, rrText{scope.path + ".title", text})
+		}
+	}
+	for _, scope := range scopes {
+		for _, key := range []string{"rank_detail", "season_rank_detail"} {
+			text, _ := scope.data[key].(string)
+			texts = append(texts, rrText{scope.path + "." + key, text})
+		}
+	}
+	// Explicit point counts precede /100 progress across all sources. There
+	// is no evidence that higher ranks need a different named API field.
+	for _, re := range []*regexp.Regexp{rrTextRE, rrSlashRE} {
+		for _, candidate := range texts {
+			for _, mm := range re.FindAllStringSubmatchIndex(candidate.text, -1) {
+				// A spaced sign, decimal, or slash is still part of the
+				// number's context (notably "82 / 100 RR").
+				prefix := strings.TrimSpace(candidate.text[:mm[4]])
+				if prefix != "" && strings.ContainsRune("+-./,", rune(prefix[len(prefix)-1])) {
+					continue
+				}
+				rr := rrInteger(candidate.text[mm[4]:mm[5]], false)
+				if rr == "" {
+					continue
+				}
+				if re == rrSlashRE {
+					n, _ := strconv.ParseInt(rr, 10, 64)
+					if n > 100 {
+						continue
+					}
+				}
+				return rr, candidate.path
+			}
+		}
+	}
+	return "", ""
 }

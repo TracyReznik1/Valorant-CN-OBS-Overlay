@@ -132,6 +132,7 @@
     const rrValue = document.getElementById('rr-value');
     const todayRecord = document.getElementById('today-record');
     const lastChange = document.getElementById('last-change');
+    const indicator = document.querySelector('.stale-indicator');
 
     function safeText(value, fallback='--') {
       return value === null || value === undefined || value === '' ? fallback : String(value);
@@ -142,7 +143,8 @@
       rrValue.textContent = `${safeText(data.rr)} RR`;
       todayRecord.textContent = `${Number(data.today_wins || 0)} Win / ${Number(data.today_losses || 0)} Loss`;
       todayRecord.classList.toggle('partial', Boolean(data.today_partial));
-      card.classList.toggle('stale', Boolean(data.stale));
+      card.classList.toggle('stale', Boolean(data.stale || data.warning));
+      indicator.title = data.error || data.warning || '数据已更新';
 
       if (data.rank_icon) {
         icon.src = data.rank_icon;
@@ -162,10 +164,11 @@
     async function refresh() {
       try {
         const response = await fetch('/api/state', {cache: 'no-store'});
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         applyState(await response.json());
       } catch (_) {
         card.classList.add('stale');
+        indicator.title = '本机状态读取失败，保留上次显示';
       }
     }
 
