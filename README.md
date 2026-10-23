@@ -53,6 +53,12 @@
 ### 4. UI 设计系统
 
 <p align="center">
+  <img src="docs/images/ui-anatomy.png" width="1000" alt="UI 组件框选说明：段位图标、段位与 RR、连胜徽章、今日战绩、上一局变化">
+</p>
+
+<p align="center"><sub>组件框选说明：① 段位图标 · ② 段位 + RR · ③ 连胜/连败徽章 · ④ 今日战绩 · ⑤ 上一局变化 · ⑥ 段位色边框</sub></p>
+
+<p align="center">
   <img src="docs/images/ui-board.png" width="1000" alt="UI 设计系统：神话 / 辐能、鎏金连胜、红黑连败">
 </p>
 
@@ -72,15 +78,11 @@
 
 ## 特性
 
-| | |
-|:--|:--|
-| 🎯 **游戏内段位图标** | 直接使用掌瓦段位卡片返回的图标，不用文字冒充段位 |
-| 🎨 **段位/胜负动态背景** | 段位主色 + 上一局胜负渐变；连胜鎏金、连败红黑 |
-| 🔥 **连胜/连败呼吸动画** | 2 场起显示徽章；卡片与徽章同频呼吸，无扫光 |
-| 🖥️ **Windows / macOS** | Windows 10/11 x64；macOS 12+ Apple Silicon / Intel |
-| 🔐 **本机加密登录** | Windows DPAPI；macOS Keychain + AES-GCM |
-| 📊 **状态页与诊断** | 本机查看状态、错误、RR 来源，一键重新登录 |
-| ⚡ **轻量单文件** | Go 标准库，无运行时依赖，不需要 Python/管理员权限 |
+<p align="center">
+  <img src="docs/images/features.png" width="1000" alt="特性效果图：游戏内段位图标、段位/胜负动态背景、同频呼吸、双平台、本机加密、状态页与诊断">
+</p>
+
+<p align="center"><sub>游戏内段位图标 · 段位/胜负动态背景 · 同频呼吸 · Windows / macOS · 本机加密 · 状态页与诊断</sub></p>
 
 ## v1.1.0 更新
 
