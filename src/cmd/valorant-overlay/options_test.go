@@ -27,3 +27,42 @@ func TestParseOptionsResetLogin(t *testing.T) {
 		t.Fatalf("options=%#v", o)
 	}
 }
+func TestParseOptionsDiagnose(t *testing.T) {
+	o, err := parseOptions([]string{"--diagnose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Diagnose {
+		t.Fatalf("options=%#v", o)
+	}
+}
+func TestParseOptionsDataDir(t *testing.T) {
+	o, err := parseOptions([]string{"--data-dir", "./profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.DataDir != "./profile" {
+		t.Fatalf("options=%#v", o)
+	}
+}
+func TestParseOptionsRejectsHugeRefresh(t *testing.T) {
+	if _, err := parseOptions([]string{"--refresh", "3601"}); err == nil {
+		t.Fatal("expected refresh upper bound")
+	}
+}
+func TestResolveDataDirExplicit(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveDataDir(dir, "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != dir {
+		t.Fatalf("got %q want %q", got, dir)
+	}
+}
+func TestEnsureWritableDir(t *testing.T) {
+	dir := t.TempDir() + "/nested"
+	if err := ensureWritableDir(dir); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -41,6 +41,15 @@ func TestCredentialStoreRoundTripIsProtected(t *testing.T) {
 	if strings.Contains(string(raw), "secret-token") {
 		t.Fatal("credential file contains plaintext token")
 	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".credentials-") {
+			t.Fatalf("temporary credential file left behind: %s", entry.Name())
+		}
+	}
 	got, ok, err := s.Load()
 	if err != nil || !ok {
 		t.Fatalf("load ok=%v err=%v", ok, err)
@@ -85,7 +94,60 @@ func TestOverlayPageIsEmbedded(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/overlay", nil)
 	w := httptest.NewRecorder()
 	NewOverlayHandler(NewOverlayState()).ServeHTTP(w, req)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "VALORANT CN Rank Overlay") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "无畏契约") {
 		t.Fatalf("code=%d body=%q", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Content-Security-Policy") == "" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("missing security headers: %v", w.Header())
+	}
+}
+
+func TestStatusPageAndReloginEndpoint(t *testing.T) {
+	state := NewOverlayState()
+	calls := 0
+	handler := NewOverlayHandler(state, func() bool { calls++; return true })
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/status", nil)
+	statusRec := httptest.NewRecorder()
+	handler.ServeHTTP(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK || !strings.Contains(statusRec.Body.String(), "重新登录") {
+		t.Fatalf("status code=%d body=%q", statusRec.Code, statusRec.Body.String())
+	}
+
+	reloginReq := httptest.NewRequest(http.MethodPost, "/api/relogin", nil)
+	reloginRec := httptest.NewRecorder()
+	handler.ServeHTTP(reloginRec, reloginReq)
+	if reloginRec.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("relogin code=%d calls=%d body=%q", reloginRec.Code, calls, reloginRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/relogin", nil)
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET relogin code=%d", getRec.Code)
+	}
+
+	busyHandler := NewOverlayHandler(state, func() bool { return false })
+	busyRec := httptest.NewRecorder()
+	busyHandler.ServeHTTP(busyRec, httptest.NewRequest(http.MethodPost, "/api/relogin", nil))
+	if busyRec.Code != http.StatusConflict {
+		t.Fatalf("busy relogin code=%d", busyRec.Code)
+	}
+
+	noCallback := NewOverlayHandler(state)
+	noCallbackRec := httptest.NewRecorder()
+	noCallback.ServeHTTP(noCallbackRec, httptest.NewRequest(http.MethodPost, "/api/relogin", nil))
+	if noCallbackRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no-callback relogin code=%d", noCallbackRec.Code)
+	}
+}
+
+func TestOverlayHandlerUnknownPathIs404(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	w := httptest.NewRecorder()
+	NewOverlayHandler(NewOverlayState()).ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("code=%d", w.Code)
 	}
 }

@@ -7,11 +7,13 @@ if not exist "ValorantCNOverlay.exe" (
   pause
   exit /b 2
 )
-"ValorantCNOverlay.exe" --version
+"ValorantCNOverlay.exe" --diagnose
 if errorlevel 1 (
-  echo [失败] EXE 无法启动。请确认系统为 Windows 10/11 64 位，并检查杀毒软件拦截记录。
+  echo.
+  echo [失败] 诊断发现异常，请截图上方完整信息。
 ) else (
-  echo [通过] EXE 可以启动。
+  echo.
+  echo [通过] 基础诊断全部通过。
   echo 如运行 Overlay 仍失败，请双击“启动段位Overlay.bat”并截图完整错误信息。
 )
 pause

@@ -6,8 +6,8 @@
 
 基线版本：`ad62f19036b4594f02134ea828431a7c81cd966a`（v1.0.0 发布准备）。运行时仅依赖 Go 标准库。
 
-1. `main.go` 读取选项，在首次刷新成功后启动仅监听 `127.0.0.1` 的 HTTP 服务。默认后台刷新 30 秒，最低可配置为 5 秒。
-2. `service.go` 从 DPAPI 加密文件加载凭证，调用 `FetchMainRole()` 验证；失效或角色信息无效时按原逻辑清除缓存并 QQ 扫码。角色选择优先 `gameId=agame`，否则延续原来的首个角色回退规则。
+1. `main.go` 读取选项，先启动仅监听 `127.0.0.1` 的 HTTP 服务，再异步执行首次刷新；瞬时网络失败会退避重试，认证错误会尝试一次重新扫码，结构错误才退出。默认后台刷新 30 秒，最低可配置为 5 秒。
+2. `service.go` 从 DPAPI（Windows）或 Keychain+AES-GCM（macOS）加密文件加载凭证，调用 `FetchMainRole()` 验证；只有明确的认证失败才删除缓存并进入交互式扫码，瞬时网络/结构错误保留凭证。后台刷新不再触发扫码。角色选择优先 `gameId=agame`；若响应带 `gameId` 但不是 `agame`，拒绝使用该角色。
 3. `probe.go` POST `/go/account/get_main_role_raw`，返回 JSON envelope 的 `data`；优先使用角色中的有效段位名称，缺失时从名片标题读取明确名称，数值 `tier` 不直接展示或猜测映射；`game_role_id`、`scene` 用于后续请求。
 4. `FetchValCard()` POST `/go/mine/card/val_card`，提供当前段位卡片；`card.left_data.image_url` 用作段位图标，`card.left_data.title` 是已有的 RR 文本来源。
 5. `FetchRecentMatches()` POST `/go/agame/career/record/list`，每页 10 局，最多 3 页，遇到早于本地当天的数据或不足一页即停止。今日胜负只统计当地日期内的竞技对局；上一局变化来自最近竞技对局的 `competitive_tier` 或对局顶层变化字段。
@@ -50,7 +50,7 @@
 
 | 场景 | 本机 API 状态 | 显示与恢复 |
 | --- | --- | --- |
-| 尚未首次刷新 | `stale=true`，等待首次刷新 | 正常程序在首次 API 刷新失败时退出，不会启动 HTTP 服务 |
+| 尚未首次刷新 | `stale=true`，等待首次刷新 | HTTP 服务已启动并显示等待；瞬时失败退避重试，认证错误尝试一次重新扫码，结构错误才退出 |
 | 初始化探针、登录、角色、名片或战绩请求失败 | `stale=true`，`error` 带阶段 | `MarkStale()` 保留整份此前快照及 `updated_at`；后续成功 `Update()` 清除 stale/error |
 | API 正常但已定级账号的当前 RR 无法解析 | `stale=false`，`rr=--`，`warning=[rr_parse] ...` | 展示本次其他有效数据并亮黄点，明确属于解析不完整；不把以前 RR 拼到新段位上。恢复可解析 RR 后清除 warning |
 | 已明确未定级，当前 RR 不存在 | `stale=false`，`rr=--`，无 RR 解析告警 | RR 不适用；若接口明确提供 0 等有效 RR，仍展示该值，不伪造 0 |
@@ -64,8 +64,10 @@
 
 - `rr_source`：固定字段路径，例如 `source[1].card.left_data.title`，只说明取值位置。
 - `warning`：固定解析说明；API 错误仍放在 `error` 中，阶段如 `[val_card]`、`[matches]`。
+- `/status`：本机状态页，显示段位、RR、今日战绩、错误/告警和 RR 来源；页面上的“重新登录”按钮通过 `POST /api/relogin` 显式请求一次扫码。后台定时刷新仍不会自动扫码。
+- `--diagnose`：检查运行平台、数据目录、系统安全存储、登录缓存、端口和掌瓦连通性；不读取或输出凭证内容。
 
-错误输出不包含原始响应正文、服务端任意消息、带查询参数的 URL 或任意底层错误文本；保留阶段、HTTP 状态码、接口数值错误码和超时说明。登录请求参数、Cookie、DPAPI 存储逻辑均未更改。没有添加原始响应转储功能。
+错误输出不包含原始响应正文、服务端任意消息、带查询参数的 URL 或任意底层错误文本；保留阶段、HTTP 状态码、接口数值错误码和超时说明。登录请求参数和 Cookie 均未更改；凭证文件改为原子写入。Windows 默认目录为 `%LOCALAPPDATA%\ValorantCNOverlay`，macOS 为 `~/Library/Application Support/ValorantCNOverlay`；旧 `.data` 目录会自动沿用。后台刷新不再触发交互式扫码，认证失败时保留凭证并提示运行 `重新登录.bat`。没有添加原始响应转储功能。
 
 ## 测试与现场验证
 
@@ -92,7 +94,7 @@ go build -trimpath -ldflags "-s -w" -o build/ValorantCNOverlay.exe ./src/cmd/val
 
 2026-10-17 本地验证（PowerShell 7.6.3、Go 1.26.5、Windows/amd64）：
 
-- `go test ./...` 及最终 `go test -count=1 -coverprofile build/coverage.out ./...` 均通过，包含真实 Windows DPAPI 往返测试；整体语句覆盖率 57.3%。
+- `go test ./...` 及最终 `go test -count=1 -coverprofile build/coverage.out ./...` 均通过，包含真实 Windows DPAPI 往返测试；整体语句覆盖率 57.3%（该数字属于当时记录；后续加固代码会改变覆盖率，以本地输出为准）。
 - `go vet ./...` 通过；可选前端 Node 检查 3 项全部通过。
 - 显式设置 `GOOS=windows`、`GOARCH=amd64`、`CGO_ENABLED=0` 后构建通过。这是在 Windows 上验证目标构建，并非跨系统交叉编译。
 - `build/ValorantCNOverlay.exe --version` 成功运行，输出 `v1.0.0`；这是版本入口启动检查，不代表已经 QQ 登录或成功请求真实掌瓦 API。
@@ -114,11 +116,12 @@ go build -trimpath -ldflags "-s -w" -o build/ValorantCNOverlay.exe ./src/cmd/val
 安全诊断默认不参与普通测试。仅在本机需要排查时显式启用：
 
 ```powershell
-$env:VALORANT_OVERLAY_DIAGNOSTICS_STORE = (Resolve-Path ./.data/credentials.bin).Path
+$env:VALORANT_OVERLAY_DIAGNOSTICS_STORE = (Resolve-Path "$env:LOCALAPPDATA\ValorantCNOverlay\credentials.bin").Path
+# 旧便携目录仍可用：.\.data\credentials.bin
 $env:VALORANT_OVERLAY_DIAGNOSTICS_EXPECT_RANK = '未定级' # 可选断言
 go test -tags localdiagnostics -run '^TestLocalRankDiagnostic$' -count=1 -v ./src/cmd/valorant-overlay
 Remove-Item Env:VALORANT_OVERLAY_DIAGNOSTICS_STORE
 Remove-Item Env:VALORANT_OVERLAY_DIAGNOSTICS_EXPECT_RANK -ErrorAction SilentlyContinue
 ```
 
-诊断直接读取现有 DPAPI 缓存并在内存解密，只请求当前主角色和名片，不执行扫码、不删除或重写登录缓存；默认不记录任意响应文本。未定级账号的实测不能替代真实神话、辐能战魂数据验证。
+诊断直接读取现有 DPAPI/Keychain 缓存并在内存解密，只请求当前主角色和名片，不执行扫码、不删除或重写登录缓存；默认不记录任意响应文本。未定级账号的实测不能替代真实神话、辐能战魂数据验证。

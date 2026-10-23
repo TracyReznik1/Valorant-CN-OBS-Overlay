@@ -61,4 +61,4 @@ func (dpapiProtector) Unprotect(in []byte) ([]byte, error) {
 	defer procLocalFree.Call(uintptr(unsafe.Pointer(out.pbData)))
 	return blobBytes(out), nil
 }
-func defaultProtector() Protector { return dpapiProtector{} }
+func defaultProtector(string) Protector { return dpapiProtector{} }

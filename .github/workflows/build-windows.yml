@@ -1,4 +1,4 @@
-name: Build Windows x64
+name: Build Windows and macOS
 
 on:
   push:
@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    runs-on: windows-latest
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -20,13 +21,58 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Test
+      - name: Vet
+        run: go vet ./...
+
+      - name: Race tests
+        run: go test -race ./...
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+
+      - name: Format check
+        shell: pwsh
+        run: |
+          $files = gofmt -l .
+          if ($files) {
+            Write-Error "gofmt required: $files"
+            exit 1
+          }
+
+      - name: Vet
+        shell: pwsh
+        run: go vet ./...
+
+      - name: Windows tests
         shell: pwsh
         run: go test ./...
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Frontend tests
+        shell: pwsh
+        run: node --test scripts/overlay.test.mjs
+
       - name: Build Windows x64
         shell: pwsh
-        run: go build -trimpath -ldflags "-s -w" -o ValorantCNOverlay.exe ./src/cmd/valorant-overlay
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $env:CGO_ENABLED = '0'
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o ValorantCNOverlay.exe ./src/cmd/valorant-overlay
+
+      - name: Smoke test version entry
+        shell: pwsh
+        run: .\ValorantCNOverlay.exe --version
 
       - name: Assemble portable ZIP
         shell: pwsh
@@ -38,22 +84,100 @@ jobs:
           Copy-Item src,scripts,licenses,.github,docs $root/ -Recurse
           $hash = (Get-FileHash "$root/ValorantCNOverlay.exe" -Algorithm SHA256).Hash.ToLower()
           "$hash  ValorantCNOverlay.exe" | Set-Content -Encoding ascii "$root/CHECKSUMS.sha256"
+          "$hash  ValorantCNOverlay.exe" | Set-Content -Encoding ascii "dist/CHECKSUMS.sha256"
           Compress-Archive -Path $root -DestinationPath "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" -Force
 
       - uses: actions/upload-artifact@v4
         with:
           name: Valorant-CN-OBS-Overlay-Windows-x64
-          path: dist/Valorant-CN-OBS-Overlay-Windows-x64.zip
+          path: |
+            dist/Valorant-CN-OBS-Overlay-Windows-x64.zip
+            dist/CHECKSUMS.sha256
 
-      - name: Publish GitHub Release for tags
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
+  macos:
+    needs: test
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+
+      - name: Format check
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: macOS tests
+        run: go test ./...
+
+      - name: Build macOS arm64
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/ValorantCNOverlay-macos-arm64 ./src/cmd/valorant-overlay
+
+      - name: Build macOS amd64
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/ValorantCNOverlay-macos-amd64 ./src/cmd/valorant-overlay
+
+      - name: Assemble macOS ZIP
+        run: |
+          root="dist/Valorant-CN-OBS-Overlay-macOS"
+          mkdir -p "$root"
+          cp dist/ValorantCNOverlay-macos-arm64 "$root/"
+          cp dist/ValorantCNOverlay-macos-amd64 "$root/"
+          cp 启动段位Overlay.command 重新登录.command 诊断.command README.md LICENSE THIRD_PARTY_NOTICES.md VERSION "$root/"
+          cp -R docs licenses "$root/"
+          chmod +x "$root"/*.command
+          (cd "$root" && shasum -a 256 ValorantCNOverlay-macos-arm64 ValorantCNOverlay-macos-amd64 > CHECKSUMS.sha256)
+          cp "$root/CHECKSUMS.sha256" dist/CHECKSUMS-macOS.sha256
+          (cd dist && zip -r Valorant-CN-OBS-Overlay-macOS.zip Valorant-CN-OBS-Overlay-macOS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Valorant-CN-OBS-Overlay-macOS
+          path: |
+            dist/Valorant-CN-OBS-Overlay-macOS.zip
+            dist/CHECKSUMS-macOS.sha256
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Valorant-CN-OBS-Overlay-Windows-x64
+          path: dist/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: Valorant-CN-OBS-Overlay-macOS
+          path: dist/macos
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = "docs/releases/${{ github.ref_name }}.md"
-          if (Test-Path $notes) {
-            gh release create "${{ github.ref_name }}" "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" --notes-file $notes --title "${{ github.ref_name }}"
-          } else {
-            gh release create "${{ github.ref_name }}" "dist/Valorant-CN-OBS-Overlay-Windows-x64.zip" --generate-notes --title "${{ github.ref_name }}"
-          }
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          assets=(
+            dist/windows/Valorant-CN-OBS-Overlay-Windows-x64.zip
+            dist/windows/CHECKSUMS.sha256
+            dist/macos/Valorant-CN-OBS-Overlay-macOS.zip
+            dist/macos/CHECKSUMS-macOS.sha256
+          )
+          if [ -f "$notes" ]; then
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --notes-file "$notes" --title "$GITHUB_REF_NAME"
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --generate-notes --title "$GITHUB_REF_NAME"
+          fi
