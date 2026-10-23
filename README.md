@@ -50,6 +50,20 @@
 <p><b>UI 细节</b>：段位主色会跟着段位变化（神话为粉红、辐能为金色），再叠加上一局胜负色（连胜鎏金、连败红黑）；连胜/连败徽章和整卡呼吸同频，达到 2 场才触发。</p>
 </blockquote>
 
+## UI 设计
+
+<p align="center">
+  <img src="docs/images/ui-board.png" width="1000" alt="UI 设计系统：神话 / 辐能、鎏金连胜、红黑连败">
+</p>
+
+<p align="center"><sub>段位主色 / 鎏金连胜 / 红黑连败 / 徽章与 2.4s 同频呼吸</sub></p>
+
+<p align="center">
+  <img src="docs/images/obs-scene.png" width="1000" alt="OBS 场景示意：420×120 浏览器源">
+</p>
+
+<p align="center"><sub>OBS 场景示意 · 浏览器源 420 × 120 · 透明背景叠加</sub></p>
+
 ## 特性
 
 | | |
