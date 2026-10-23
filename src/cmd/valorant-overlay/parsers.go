@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,15 @@ var ptuiCallbackRE = regexp.MustCompile(`ptuiCB\('([^']*)','([^']*)','([^']*)','
 
 var rrKeys = []string{"league_point", "ranked_rating", "rank_rating", "competitive_point", "rr"}
 var rrChangeKeys = []string{"competitive_point_change", "ranked_rating_earned", "rank_rating_change"}
+
+// chinaLocation pins "today" to the Valorant CN daily reset timezone instead
+// of whatever timezone the host machine happens to use.
+var chinaLocation = func() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
+		return loc
+	}
+	return time.FixedZone("CST", 8*60*60)
+}()
 
 type PTUICallback struct {
 	Code        string
@@ -57,19 +67,33 @@ func parsePTUICallback(text string) (PTUICallback, bool) {
 func urlQueryEscape(s string) string { return url.QueryEscape(s) }
 
 func normalizeEscapedURL(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, `\/`, `/`), `\x26`, `&`)
+	s = strings.ReplaceAll(s, `\/`, `/`)
+	s = strings.ReplaceAll(s, `\x26`, `&`)
+	s = strings.ReplaceAll(s, `\u0026`, `&`)
+	return strings.ReplaceAll(s, "&amp;", "&")
 }
 
+// parseLooseQuery parses auth query strings/fragments without corrupting
+// tokens that contain a literal "+". url.ParseQuery treats "+" as a space,
+// which is correct for form bodies but not for QQ access tokens in fragments.
 func parseLooseQuery(raw string) map[string]string {
 	out := map[string]string{}
-	raw = strings.TrimLeft(strings.ReplaceAll(raw, "#&", "&"), "&")
-	q, err := url.ParseQuery(raw)
-	if err != nil {
-		return out
-	}
-	for k, vals := range q {
-		if len(vals) > 0 {
-			out[k] = vals[0]
+	raw = strings.TrimLeft(strings.ReplaceAll(raw, "#&", "&"), "&#")
+	for _, part := range strings.Split(raw, "&") {
+		if part == "" {
+			continue
+		}
+		key, value, _ := strings.Cut(part, "=")
+		k, err := url.PathUnescape(key)
+		if err != nil {
+			continue
+		}
+		v, err := url.PathUnescape(value)
+		if err != nil {
+			continue
+		}
+		if _, exists := out[k]; !exists {
+			out[k] = v
 		}
 	}
 	return out
@@ -109,7 +133,7 @@ func extractLoginData(value string) map[string]string {
 			}
 		}
 		for k, v := range params {
-			if _, ok := merged[k]; !ok {
+			if _, ok := merged[k]; !ok && v != "" {
 				merged[k] = v
 			}
 		}
@@ -310,6 +334,55 @@ func findLatestCompetitiveMatch(matches []map[string]any) map[string]any {
 	return nil
 }
 
+// currentStreak counts consecutive wins/losses from the newest competitive
+// match backwards. Non-competitive matches are skipped; a draw or an unknown
+// result ends the streak rather than guessing.
+func matchesSince(matches []map[string]any, since time.Time) []map[string]any {
+	if since.IsZero() {
+		return matches
+	}
+	cutoff := since.Unix()
+	out := make([]map[string]any, 0, len(matches))
+	for _, match := range matches {
+		ts, ok := extractMatchTimestamp(match)
+		if ok && int64(ts) >= cutoff {
+			out = append(out, match)
+		}
+	}
+	return out
+}
+
+func currentStreak(matches []map[string]any) (string, int) {
+	streak := ""
+	count := 0
+	for _, match := range matches {
+		if !isCompetitiveMatch(match) {
+			continue
+		}
+		result := normalizedMatchResult(match)
+		if result != "胜利" && result != "失败" {
+			break
+		}
+		if streak == "" {
+			streak = result
+			count = 1
+			continue
+		}
+		if result != streak {
+			break
+		}
+		count++
+	}
+	switch streak {
+	case "胜利":
+		return "win", count
+	case "失败":
+		return "loss", count
+	default:
+		return "none", 0
+	}
+}
+
 // RR and RR changes are integer counts. Never pass unrecognised API text
 // through to the overlay, or round a fraction/non-finite/overflowing number.
 func rrInteger(v any, signed bool) string {
@@ -365,13 +438,27 @@ func extractMatchTimestamp(match map[string]any) (float64, bool) {
 		return 0, false
 	}
 	f, err := strconv.ParseFloat(stringValue(v), 64)
-	if err != nil {
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, false
 	}
 	if f > 1e10 {
 		f /= 1000
 	}
 	return f, true
+}
+
+func sortMatchesByTimestampDesc(matches []map[string]any) {
+	sort.SliceStable(matches, func(i, j int) bool {
+		ti, oki := extractMatchTimestamp(matches[i])
+		tj, okj := extractMatchTimestamp(matches[j])
+		if !oki {
+			return false
+		}
+		if !okj {
+			return true
+		}
+		return ti > tj
+	})
 }
 
 func normalizedMatchResult(match map[string]any) string {
@@ -403,10 +490,10 @@ func normalizedMatchResult(match map[string]any) string {
 
 func summarizeToday(matches []map[string]any, now time.Time) TodaySummary {
 	out := TodaySummary{}
-	y, m, d := now.Date()
-	loc := now.Location()
-	start := time.Date(y, m, d, 0, 0, 0, 0, loc)
-	end := start.Add(24 * time.Hour)
+	local := now.In(chinaLocation)
+	y, m, d := local.Date()
+	start := time.Date(y, m, d, 0, 0, 0, 0, local.Location())
+	end := start.AddDate(0, 0, 1)
 	for _, match := range matches {
 		if !isCompetitiveMatch(match) {
 			continue
@@ -415,7 +502,7 @@ func summarizeToday(matches []map[string]any, now time.Time) TodaySummary {
 		if !ok {
 			continue
 		}
-		mt := time.Unix(int64(ts), 0).In(loc)
+		mt := time.Unix(int64(ts), 0).In(local.Location())
 		if mt.Before(start) || !mt.Before(end) {
 			continue
 		}
@@ -446,8 +533,8 @@ func extractRRChange(match map[string]any) string {
 
 // Consume the full digit sequence and require boundaries: 1250 must never
 // become 250 or 50, nor may -18, 18.5, or the denominator of 82/100 become RR.
-var rrTextRE = regexp.MustCompile(`(?i)(^|[^0-9A-Za-z_+,./\-])([0-9]+)\s*(RR\b|分)(?:$|[^A-Za-z])`)
-var rrSlashRE = regexp.MustCompile(`(^|[^0-9A-Za-z_+,./\-])([0-9]+)\s*/\s*100(?:$|[^0-9A-Za-z_./])`)
+var rrTextRE = regexp.MustCompile(`(?i)(^|[^0-9A-Za-z_+,./\-])([0-9]+)\s*(RR\b|分)(?:$|[^0-9A-Za-z])`)
+var rrSlashRE = regexp.MustCompile(`(^|[^0-9A-Za-z_+,./\-])([0-9]+)\s*/\s*100(?:$|[^0-9A-Za-z_./,])`)
 
 type rrScope struct {
 	path string

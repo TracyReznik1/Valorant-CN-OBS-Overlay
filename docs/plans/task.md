@@ -5,3 +5,5 @@
 | Fix rank and RR parsing | Completed | Explicit rank names, cumulative RR, safe diagnostics and regression coverage |
 | Clean up unused code | Completed | Removed unused role fields, an unused return value and repeated match-list conversions |
 | Prepare v1.0.1 | Completed | Version metadata, release notes and portable-package documentation prepared |
+| Harden session lifecycle and UI | Completed | Typed auth errors, server-first startup, atomic storage, status page, diagnostics, Chinese game-icon overlay |
+| Add macOS support | Completed | Keychain+AES-GCM credentials, Application Support data dir, flock single instance, macOS launchers and CI packaging |

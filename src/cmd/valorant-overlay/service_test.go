@@ -3,7 +3,6 @@
 package main
 
 import (
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,19 +10,29 @@ import (
 )
 
 type fakeProbe struct {
-	role       any
-	card       any
-	pages      map[int]any
-	login      Credentials
-	loginCalls int
-	roleErr    error
-	cardErr    error
-	matchErr   error
-	loginErr   error
+	role         any
+	card         any
+	pages        map[int]any
+	login        Credentials
+	loginCalls   int
+	roleCalls    int
+	roleErr      error
+	cardErr      error
+	matchErr     error
+	loginErr     error
+	roleErrQueue []error
 }
 
-func (f *fakeProbe) QQLogin() (Credentials, error)                       { f.loginCalls++; return f.login, f.loginErr }
-func (f *fakeProbe) FetchMainRole(Credentials) (any, error)              { return f.role, f.roleErr }
+func (f *fakeProbe) QQLogin() (Credentials, error) { f.loginCalls++; return f.login, f.loginErr }
+func (f *fakeProbe) FetchMainRole(Credentials) (any, error) {
+	f.roleCalls++
+	if len(f.roleErrQueue) > 0 {
+		err := f.roleErrQueue[0]
+		f.roleErrQueue = f.roleErrQueue[1:]
+		return f.role, err
+	}
+	return f.role, f.roleErr
+}
 func (f *fakeProbe) FetchValCard(Credentials, RoleSnapshot) (any, error) { return f.card, f.cardErr }
 func (f *fakeProbe) FetchRecentMatches(_ Credentials, _ RoleSnapshot, page, size int) (any, error) {
 	return f.pages[page], f.matchErr
@@ -48,6 +57,39 @@ func testRefreshService(t *testing.T) (*OverlayService, *fakeProbe) {
 		Now:      func() time.Time { return time.Date(2026, 10, 17, 12, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)) },
 	}
 	return svc, fp
+}
+
+func TestStreakSessionStartsAtLaunch(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	now := svc.now()
+	fp.pages[1] = map[string]any{"battle_list": []any{
+		map[string]any{"game_enum": "competitive", "result_title": "失败", "ts": now.Add(-time.Hour).Unix()},
+		map[string]any{"game_enum": "competitive", "result_title": "失败", "ts": now.Add(-2 * time.Hour).Unix()},
+	}}
+
+	svc.SessionStart = now.Add(-time.Minute)
+	snap, err := svc.refreshOnce(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.StreakType != "none" || snap.StreakCount != 0 {
+		t.Fatalf("streak before launch should be empty, got %s/%d", snap.StreakType, snap.StreakCount)
+	}
+	if snap.LastResult != "未获取到" || snap.LastRRChange != "--" {
+		t.Fatalf("last match before launch should be empty, got %q/%q", snap.LastResult, snap.LastRRChange)
+	}
+
+	svc.SessionStart = now.Add(-3 * time.Hour)
+	snap, err = svc.refreshOnce(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.StreakType != "loss" || snap.StreakCount != 2 {
+		t.Fatalf("streak after launch = %s/%d, want loss/2", snap.StreakType, snap.StreakCount)
+	}
+	if snap.LastResult != "失败" {
+		t.Fatalf("last result after launch = %q, want 失败", snap.LastResult)
+	}
 }
 
 func TestFetchMatchPagesKeepsSummaryAndPagination(t *testing.T) {
@@ -108,7 +150,7 @@ func TestRefreshFailureRetainsSnapshotAndRecovers(t *testing.T) {
 			if before.Stale || before.Warning != "" || before.RR != "350" {
 				t.Fatalf("before=%+v", before)
 			}
-			failure := &ProbeError{stage, "测试请求失败"}
+			failure := probeErr(stage, KindUnknown, "测试请求失败")
 			switch stage {
 			case "role_info":
 				fp.roleErr = failure
@@ -117,7 +159,7 @@ func TestRefreshFailureRetainsSnapshotAndRecovers(t *testing.T) {
 			case "matches":
 				fp.matchErr = failure
 			case "qq_login":
-				fp.roleErr = errors.New("test expired")
+				fp.roleErr = probeErr("role_info", KindAuth, "test expired")
 				fp.loginErr = failure
 			case "new_probe":
 				svc.NewProbe = func() (ProbeAPI, error) { return nil, failure }
@@ -158,7 +200,7 @@ func TestRRMissingIsDiagnosedSeparatelyFromAPIFailure(t *testing.T) {
 	if partial.Stale || partial.Error != "" || partial.RR != "--" || partial.RRSource != "" || !strings.HasPrefix(partial.Warning, "[rr_parse]") {
 		t.Fatalf("missing RR not diagnosed: %+v", partial)
 	}
-	fp.cardErr = &ProbeError{"val_card", "测试请求失败"}
+	fp.cardErr = probeErr("val_card", KindSchema, "测试请求失败")
 	if _, err := svc.RefreshOnce(); err == nil {
 		t.Fatal("expected failure")
 	}
@@ -294,5 +336,155 @@ func TestOverlayServiceRefreshBuildsSnapshot(t *testing.T) {
 	_, ok, err := store.Load()
 	if err != nil || !ok {
 		t.Fatalf("credentials not cached ok=%v err=%v", ok, err)
+	}
+}
+
+func TestTransientRoleFailureKeepsCredentials(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	if _, err := svc.RefreshOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if fp.loginCalls != 1 {
+		t.Fatalf("loginCalls=%d", fp.loginCalls)
+	}
+	fp.roleErr = probeErr("role_info", KindTransient, "网络不可用")
+	if _, err := svc.RefreshOnce(); err == nil {
+		t.Fatal("expected failure")
+	}
+	if fp.loginCalls != 1 {
+		t.Fatalf("transient failure triggered login: %d", fp.loginCalls)
+	}
+	if _, ok, err := svc.Store.Load(); err != nil || !ok {
+		t.Fatalf("credentials deleted on transient failure: ok=%v err=%v", ok, err)
+	}
+	if !svc.State.Get().Stale {
+		t.Fatal("snapshot should be stale")
+	}
+	fp.roleErr = nil
+	if _, err := svc.RefreshOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if fp.loginCalls != 1 {
+		t.Fatalf("recovery triggered login: %d", fp.loginCalls)
+	}
+}
+
+func TestBackgroundAuthFailureDoesNotLogin(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	if _, err := svc.RefreshOnce(); err != nil {
+		t.Fatal(err)
+	}
+	fp.roleErr = probeErr("role_info", KindAuth, "登录已过期")
+	if _, err := svc.refreshOnce(false); err == nil {
+		t.Fatal("expected auth failure")
+	}
+	if fp.loginCalls != 1 {
+		t.Fatalf("background auth failure triggered login: %d", fp.loginCalls)
+	}
+	if _, ok, err := svc.Store.Load(); err != nil || !ok {
+		t.Fatalf("background auth failure deleted credentials: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(svc.State.Get().Error, "重新登录") {
+		t.Fatalf("missing relogin guidance: %+v", svc.State.Get())
+	}
+}
+
+func TestRoleCacheAvoidsRepeatedRoleFetch(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	current := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	svc.Now = func() time.Time { return current }
+	svc.RoleCacheTTL = 5 * time.Minute
+	if _, err := svc.RefreshOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if fp.roleCalls != 1 {
+		t.Fatalf("roleCalls after login=%d", fp.roleCalls)
+	}
+	if _, err := svc.RefreshOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if fp.roleCalls != 1 {
+		t.Fatalf("cached refresh refetched role: %d", fp.roleCalls)
+	}
+	current = current.Add(6 * time.Minute)
+	if _, err := svc.RefreshOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if fp.roleCalls != 2 {
+		t.Fatalf("expired cache did not refetch role: %d", fp.roleCalls)
+	}
+}
+
+func TestStartRecoversFromAuthFailureWithRelogin(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	fp.roleErrQueue = []error{probeErr("role_info", KindAuth, "expired"), nil}
+	stop := make(chan struct{})
+	if err := svc.Start(stop); err != nil {
+		t.Fatal(err)
+	}
+	if fp.loginCalls != 2 {
+		t.Fatalf("expected one re-login, loginCalls=%d", fp.loginCalls)
+	}
+	if svc.State.Get().Stale {
+		t.Fatal("snapshot should be fresh after re-login")
+	}
+}
+
+func TestQRRefreshableStages(t *testing.T) {
+	for _, stage := range []string{"qq_qr_expired", "qq_login_timeout"} {
+		if !isQRRefreshable(probeErr(stage, KindLogin, "x")) {
+			t.Fatalf("%s should refresh QR", stage)
+		}
+	}
+	for _, stage := range []string{"qq_login_canceled", "qq_xlogin", "qq_poll"} {
+		if isQRRefreshable(probeErr(stage, KindLogin, "x")) {
+			t.Fatalf("%s should not refresh QR", stage)
+		}
+	}
+}
+
+func TestRequestReloginIsSingleFlight(t *testing.T) {
+	svc := &OverlayService{ReloginCh: make(chan struct{}, 1)}
+	if !svc.RequestRelogin() {
+		t.Fatal("first request rejected")
+	}
+	if svc.RequestRelogin() {
+		t.Fatal("second request should be rejected while busy")
+	}
+	<-svc.ReloginCh
+	svc.reloginBusy.Store(false)
+	if !svc.RequestRelogin() {
+		t.Fatal("request after busy reset rejected")
+	}
+}
+
+func TestStartStopsOnClosedStop(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	fp.roleErrQueue = []error{probeErr("role_info", KindTransient, "network")}
+	stop := make(chan struct{})
+	close(stop)
+	if err := svc.Start(stop); err == nil {
+		t.Fatal("expected stop error")
+	}
+	if fp.loginCalls != 1 {
+		t.Fatalf("loginCalls=%d", fp.loginCalls)
+	}
+}
+
+func TestValidPCRoleRejectsMobileRole(t *testing.T) {
+	for _, tc := range []struct {
+		gameID string
+		want   bool
+	}{{"agame", true}, {"AGAME", true}, {"codev", false}, {"", true}} {
+		role := RoleSnapshot{GameRoleID: "pc", Scene: "s", Raw: map[string]any{}}
+		if tc.gameID != "" {
+			role.Raw["gameId"] = tc.gameID
+		}
+		if got := validPCRole(role); got != tc.want {
+			t.Fatalf("gameId=%q valid=%t want=%t", tc.gameID, got, tc.want)
+		}
+	}
+	if validPCRole(RoleSnapshot{GameRoleID: "pc", Scene: "s"}) != true {
+		t.Fatal("role without gameId should remain accepted for synthetic data")
 	}
 }

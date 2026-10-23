@@ -150,3 +150,65 @@ func TestCurrentRRFromAPIDecodedData(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyQRCode(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want qrCodeAction
+	}{
+		{"0", qrSuccess},
+		{"65", qrExpired},
+		{"53", qrCanceled},
+		{"66", qrWaiting},
+		{"67", qrWaiting},
+		{"1", qrWaiting},
+		{"2", qrWaiting},
+	} {
+		if got := classifyQRCode(tc.code); got != tc.want {
+			t.Fatalf("classify %q = %v, want %v", tc.code, got, tc.want)
+		}
+	}
+}
+
+func TestAllowedAuthURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://xui.ptlogin2.qq.com/ssl/ptqrlogin?x=1",
+		"http://connect.qq.com",
+		"https://graph.qq.com/oauth",
+		"auth://tauth.qq.com/#access_token=x",
+	} {
+		if !isAllowedAuthURL(raw) {
+			t.Fatalf("rejected legitimate URL %q", raw)
+		}
+	}
+	for _, raw := range []string{
+		"https://evil.test/callback",
+		"http://127.0.0.1:8787/overlay",
+		"javascript:alert(1)",
+		"https://qq.com.evil.test/",
+		"file:///etc/passwd",
+	} {
+		if isAllowedAuthURL(raw) {
+			t.Fatalf("accepted unexpected URL %q", raw)
+		}
+	}
+}
+
+func TestClassifyRequestError(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want ErrorKind
+	}{
+		{httpStatusError(http.StatusUnauthorized), KindAuth},
+		{httpStatusError(http.StatusForbidden), KindAuth},
+		{httpStatusError(http.StatusBadRequest), KindSchema},
+		{httpStatusError(http.StatusBadGateway), KindTransient},
+		{httpStatusError(http.StatusTooManyRequests), KindTransient},
+		{errResponseTooLarge, KindSchema},
+		{fmt.Errorf("network"), KindTransient},
+	} {
+		if got := classifyRequestError(tc.err); got != tc.want {
+			t.Fatalf("classify %v = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}

@@ -6,6 +6,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestLocalRankDiagnostic(t *testing.T) {
 	if path == "" {
 		t.Skip("set the local encrypted credential-store path to opt in")
 	}
-	store := CredentialStore{Path: path, Protector: defaultProtector()}
+	store := CredentialStore{Path: path, Protector: defaultProtector(filepath.Dir(path))}
 	c, ok, err := store.Load()
 	if err != nil || !ok {
 		t.Fatal("cannot load local encrypted login")

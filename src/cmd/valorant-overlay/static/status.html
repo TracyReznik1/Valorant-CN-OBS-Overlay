@@ -1,0 +1,143 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>段位显示状态</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 15% 0%, #1d2230, #0d0f16 55%);
+      color: #e9ecf5;
+    }
+    main { max-width: 780px; margin: 0 auto; padding: 48px 20px; }
+    .panel {
+      background: rgba(22, 25, 35, .92);
+      border: 1px solid #2a2f3e;
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .muted { color: #9aa3b5; font-size: 13px; line-height: 1.7; }
+    .grid {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 10px 18px;
+      margin: 24px 0;
+      font-size: 14px;
+    }
+    .label { color: #9aa3b5; }
+    .value { color: #f4f6fb; font-weight: 600; overflow-wrap: anywhere; }
+    .value.ok { color: #86e3ad; }
+    .value.warn { color: #ffd45a; }
+    .value.bad { color: #ff9aa3; }
+    button {
+      appearance: none;
+      border: 1px solid rgba(255,126,150,.5);
+      border-radius: 9px;
+      background: rgba(255,126,150,.14);
+      color: #ffd7de;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(255,126,150,.22); }
+    button:disabled { opacity: .55; cursor: wait; }
+    .message { min-height: 22px; margin: 14px 0 0; color: #ffd45a; font-size: 13px; }
+    code {
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: #0d0f16;
+      color: #c9d2e5;
+      font-family: Consolas, "Courier New", monospace;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <h1>段位显示状态</h1>
+      <p class="muted">本页面只读取本机状态。上一局与连胜/连败都从本次软件启动后开始统计；重新登录会清除本机加密登录态，并弹出 QQ 二维码。</p>
+      <div class="grid">
+        <div class="label">段位</div><div class="value" id="rank">--</div>
+        <div class="label">竞技评分</div><div class="value" id="rr">--</div>
+        <div class="label">今日战绩</div><div class="value" id="today">--</div>
+        <div class="label">上一局</div><div class="value" id="last">--</div>
+        <div class="label">当前连胜/连败</div><div class="value" id="streak">--</div>
+        <div class="label">状态</div><div class="value" id="status">--</div>
+        <div class="label">更新时间</div><div class="value" id="updated">--</div>
+        <div class="label">错误</div><div class="value" id="error">--</div>
+        <div class="label">告警</div><div class="value" id="warning">--</div>
+        <div class="label">评分来源</div><div class="value" id="source">--</div>
+      </div>
+      <button id="relogin" type="button">重新登录（弹出二维码）</button>
+      <p id="message" class="message" role="status"></p>
+      <p class="muted">OBS 浏览器源请使用 <code id="overlay-url">/overlay</code>。</p>
+    </section>
+  </main>
+  <script>
+    const $ = function (id) { return document.getElementById(id); };
+    let busy = false;
+    function text(value) {
+      return value === null || value === undefined || value === '' ? '--' : String(value);
+    }
+    function setStatus(label, className) {
+      const element = $('status');
+      element.textContent = label;
+      element.className = 'value ' + className;
+    }
+    async function refresh() {
+      try {
+        const response = await fetch('/api/state', {cache: 'no-store'});
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const state = await response.json();
+        $('rank').textContent = text(state.rank);
+        $('rr').textContent = state.rr === '--' ? '--' : text(state.rr) + ' 分';
+        $('today').textContent = '今日 ' + Number(state.today_wins || 0) + ' 胜 / ' + Number(state.today_losses || 0) + ' 负';
+        $('last').textContent = state.last_rr_change === '--' ? '上一局 --' : '上一局 ' + state.last_rr_change + ' 分';
+        const streakCount = Number(state.streak_count || 0);
+        const streakType = String(state.streak_type || 'none');
+        $('streak').textContent = streakCount >= 2 && (streakType === 'win' || streakType === 'loss')
+          ? streakCount + (streakType === 'win' ? ' 连胜' : ' 连败')
+          : '--';
+        setStatus(state.stale ? '数据已过期' : '正常', state.stale ? 'warn' : 'ok');
+        $('updated').textContent = text(state.updated_at);
+        $('error').textContent = text(state.error);
+        $('warning').textContent = text(state.warning);
+        $('source').textContent = text(state.rr_source);
+      } catch (error) {
+        setStatus('本机状态读取失败', 'bad');
+      }
+    }
+    $('overlay-url').textContent = location.origin + '/overlay';
+    $('relogin').onclick = async function () {
+      if (busy) return;
+      busy = true;
+      $('relogin').disabled = true;
+      $('message').textContent = '正在提交重新登录请求…';
+      try {
+        const response = await fetch('/api/relogin', {method: 'POST'});
+        const body = await response.json().catch(function () { return {}; });
+        $('message').textContent = body.message || ('HTTP ' + response.status);
+      } catch (error) {
+        $('message').textContent = '请求失败：' + error.message;
+      } finally {
+        busy = false;
+        $('relogin').disabled = false;
+      }
+    };
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

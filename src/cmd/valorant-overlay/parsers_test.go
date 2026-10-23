@@ -288,3 +288,108 @@ func TestParseMatchListKnownContainers(t *testing.T) {
 		}
 	}
 }
+
+func TestRRTightBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  any
+		want string
+	}{
+		{"trailingDigitAfterUnit", valCardTitle("神话II 350分100"), ""},
+		{"slashTrailingComma", map[string]any{"rank_detail": "82/100,000"}, ""},
+		{"slashNormal", map[string]any{"rank_detail": "82/100"}, "82"},
+		{"pointsWithPunctuation", valCardTitle("神话II 350分。"), "350"},
+	} {
+		if got := extractCurrentRR(tc.src); got != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestParseLooseQueryPreservesPlus(t *testing.T) {
+	got := parseLooseQuery("#access_token=a+b&openid=o%2B1")
+	if got["access_token"] != "a+b" || got["openid"] != "o+1" {
+		t.Fatalf("tokens corrupted: %#v", got)
+	}
+}
+
+func TestNormalizeEscapedURLVariants(t *testing.T) {
+	got := normalizeEscapedURL(`https:\/\/example.test\/x?a=1\u0026b=2&amp;c=3`)
+	if got != "https://example.test/x?a=1&b=2&c=3" {
+		t.Fatalf("normalize=%q", got)
+	}
+}
+
+func TestExtractMatchTimestampRejectsNonFinite(t *testing.T) {
+	for _, value := range []any{"NaN", "Inf", "inf", "-Inf"} {
+		if _, ok := extractMatchTimestamp(map[string]any{"ts": value}); ok {
+			t.Fatalf("accepted non-finite timestamp %q", value)
+		}
+	}
+}
+
+func TestSortMatchesByTimestampDesc(t *testing.T) {
+	matches := []map[string]any{{"ts": 100.0}, {"ts": 300.0}, {"ts": 200.0}}
+	sortMatchesByTimestampDesc(matches)
+	got, _ := extractMatchTimestamp(matches[0])
+	if got != 300 {
+		t.Fatalf("newest=%v", got)
+	}
+}
+
+func TestCurrentStreak(t *testing.T) {
+	match := func(mode, result string) map[string]any {
+		return map[string]any{"game_enum": mode, "result_title": result}
+	}
+	for _, tc := range []struct {
+		name  string
+		items []map[string]any
+		kind  string
+		count int
+	}{
+		{"wins", []map[string]any{match("competitive", "胜利"), match("competitive", "胜利"), match("competitive", "胜利")}, "win", 3},
+		{"losses", []map[string]any{match("competitive", "失败"), match("competitive", "失败")}, "loss", 2},
+		{"mixed", []map[string]any{match("competitive", "胜利"), match("competitive", "失败")}, "win", 1},
+		{"drawBreaks", []map[string]any{match("competitive", "平局"), match("competitive", "胜利")}, "none", 0},
+		{"unratedSkipped", []map[string]any{match("unrated", "胜利"), match("competitive", "胜利"), match("competitive", "胜利")}, "win", 2},
+		{"unknownResult", []map[string]any{match("competitive", "未知")}, "none", 0},
+	} {
+		kind, count := currentStreak(tc.items)
+		if kind != tc.kind || count != tc.count {
+			t.Fatalf("%s: kind=%q count=%d, want %q/%d", tc.name, kind, count, tc.kind, tc.count)
+		}
+	}
+}
+
+func TestMatchesSince(t *testing.T) {
+	matches := []map[string]any{
+		{"ts": float64(999)},
+		{"ts": float64(1000)},
+		{"ts": float64(1001)},
+		{"result_title": "胜利"},
+	}
+	got := matchesSince(matches, time.Unix(1000, 0))
+	if len(got) != 2 {
+		t.Fatalf("session window len=%d, want 2", len(got))
+	}
+	if all := matchesSince(matches, time.Time{}); len(all) != len(matches) {
+		t.Fatalf("zero session should keep all, got %d", len(all))
+	}
+}
+
+func TestSummarizeTodayUsesChinaDayBoundary(t *testing.T) {
+	now := time.Date(2026, 8, 12, 17, 0, 0, 0, time.UTC) // 2026-08-13 01:00 CST
+	yesterday := time.Date(2026, 8, 12, 23, 30, 0, 0, chinaLocation)
+	today := time.Date(2026, 8, 13, 0, 30, 0, 0, chinaLocation)
+	matches, ok := parseMatchList([]any{
+		map[string]any{"game_enum": "competitive", "result_title": "胜利", "ts": float64(yesterday.Unix())},
+		map[string]any{"game_enum": "competitive", "result_title": "失败", "ts": float64(today.Unix())},
+	})
+	if !ok {
+		t.Fatal("match list not parsed")
+	}
+	got := summarizeToday(matches, now)
+	if got.Wins != 0 || got.Losses != 1 {
+		t.Fatalf("summary=%#v", got)
+	}
+}
