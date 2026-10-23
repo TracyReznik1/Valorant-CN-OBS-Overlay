@@ -37,18 +37,10 @@
 ### 2. Overlay 状态
 
 <p align="center">
-  <img src="docs/images/overlay-immortal-win.png" width="420" alt="神话II 3 连胜：鎏金呼吸">
-  <img src="docs/images/overlay-radiant-loss.png" width="420" alt="辐能 5 连败：红黑呼吸">
+  <img src="docs/images/overlay-states-row.png" width="1000" alt="四种 Overlay 状态横向排列：神话II 3 连胜、辐能 5 连败、神话II 5 连败、辐能 3 连胜">
 </p>
 
-<p align="center"><sub>神话II · 3 连胜（鎏金呼吸） / 辐能 · 5 连败（红黑呼吸）</sub></p>
-
-<p align="center">
-  <img src="docs/images/overlay-immortal-loss.png" width="420" alt="神话II 5 连败：红黑呼吸">
-  <img src="docs/images/overlay-radiant-win.png" width="420" alt="辐能 3 连胜：鎏金呼吸">
-</p>
-
-<p align="center"><sub>神话II · 5 连败 / 辐能 · 3 连胜</sub></p>
+<p align="center"><sub>横向对比：神话II · 3 连胜 / 辐能 · 5 连败 / 神话II · 5 连败 / 辐能 · 3 连胜</sub></p>
 
 ### 3. 全段位展示
 
