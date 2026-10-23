@@ -27,15 +27,15 @@
 ## 效果预览
 
 <p align="center">
-  <img src="docs/images/overlay-immortal-win.png" width="420" alt="神话II 3 连胜：绿色呼吸">
-  <img src="docs/images/overlay-radiant-loss.png" width="420" alt="辐能 5 连败：红色呼吸">
+  <img src="docs/images/overlay-immortal-win.png" width="420" alt="神话II 3 连胜：鎏金呼吸">
+  <img src="docs/images/overlay-radiant-loss.png" width="420" alt="辐能 5 连败：红黑呼吸">
 </p>
 
-<p align="center"><sub>神话II · 3 连胜（绿色呼吸） / 辐能 · 5 连败（红色呼吸）</sub></p>
+<p align="center"><sub>神话II · 3 连胜（鎏金呼吸） / 辐能 · 5 连败（红黑呼吸）</sub></p>
 
 <p align="center">
-  <img src="docs/images/overlay-immortal-loss.png" width="420" alt="神话II 5 连败：红色呼吸">
-  <img src="docs/images/overlay-radiant-win.png" width="420" alt="辐能 3 连胜：绿色呼吸">
+  <img src="docs/images/overlay-immortal-loss.png" width="420" alt="神话II 5 连败：红黑呼吸">
+  <img src="docs/images/overlay-radiant-win.png" width="420" alt="辐能 3 连胜：鎏金呼吸">
 </p>
 
 <p align="center"><sub>神话II · 5 连败 / 辐能 · 3 连胜</sub></p>
@@ -47,7 +47,7 @@
 <p align="center"><sub>本机状态页：辐能 · 500 分 · 3 连胜 · 今日 3 胜 / 1 负</sub></p>
 
 <blockquote>
-<p><b>UI 细节</b>：段位主色会跟着段位变化（神话为粉红、辐能为金色），再叠加上一局胜负色；连胜/连败徽章和整卡呼吸同频，达到 2 场才触发。</p>
+<p><b>UI 细节</b>：段位主色会跟着段位变化（神话为粉红、辐能为金色），再叠加上一局胜负色（连胜鎏金、连败红黑）；连胜/连败徽章和整卡呼吸同频，达到 2 场才触发。</p>
 </blockquote>
 
 ## 特性
@@ -55,7 +55,7 @@
 | | |
 |:--|:--|
 | 🎯 **游戏内段位图标** | 直接使用掌瓦段位卡片返回的图标，不用文字冒充段位 |
-| 🎨 **段位/胜负动态背景** | 段位主色 + 上一局胜负渐变；失败偏红、胜利偏绿 |
+| 🎨 **段位/胜负动态背景** | 段位主色 + 上一局胜负渐变；连胜鎏金、连败红黑 |
 | 🔥 **连胜/连败呼吸动画** | 2 场起显示徽章；卡片与徽章同频呼吸，无扫光 |
 | 🖥️ **Windows / macOS** | Windows 10/11 x64；macOS 12+ Apple Silicon / Intel |
 | 🔐 **本机加密登录** | Windows DPAPI；macOS Keychain + AES-GCM |
