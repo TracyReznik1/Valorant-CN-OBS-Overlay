@@ -24,7 +24,17 @@
 
 ---
 
-## 效果预览
+## 效果预览 & UI 设计
+
+### 1. OBS 实机合成
+
+<p align="center">
+  <img src="docs/images/obs-scene.png" width="1000" alt="OBS 实机场景：420×120 浏览器源位于左上角">
+</p>
+
+<p align="center"><sub>OBS 场景示意 · 420 × 120 · UI 位于左上角 · 实机画面：Riot Games / <a href="https://wiki.playvalorant.com/en-us/File:Gameplay_1.jpeg">VALORANT Wiki</a> · 仅作 UI 合成示意</sub></p>
+
+### 2. Overlay 状态
 
 <p align="center">
   <img src="docs/images/overlay-immortal-win.png" width="420" alt="神话II 3 连胜：鎏金呼吸">
@@ -40,13 +50,7 @@
 
 <p align="center"><sub>神话II · 5 连败 / 辐能 · 3 连胜</sub></p>
 
-<p align="center">
-  <img src="docs/images/status-page.png" width="720" alt="辐能状态页">
-</p>
-
-<p align="center"><sub>本机状态页：辐能 · 500 分 · 3 连胜 · 今日 3 胜 / 1 负</sub></p>
-
-## 全段位展示
+### 3. 全段位展示
 
 <p align="center">
   <img src="docs/images/rank-gallery.png" width="1000" alt="全段位展示：黑铁、青铜、白银、黄金、铂金、钻石、超凡、神话、辐能">
@@ -54,11 +58,7 @@
 
 <p align="center"><sub>黑铁 → 辐能 · 每个段位的官方图标与主色；段位色会直接影响卡片背景</sub></p>
 
-<blockquote>
-<p><b>UI 细节</b>：段位主色会跟着段位变化（神话为粉红、辐能为金色），再叠加上一局胜负色（连胜鎏金、连败红黑）；连胜/连败徽章和整卡呼吸同频，达到 2 场才触发。</p>
-</blockquote>
-
-## UI 设计
+### 4. UI 设计系统
 
 <p align="center">
   <img src="docs/images/ui-board.png" width="1000" alt="UI 设计系统：神话 / 辐能、鎏金连胜、红黑连败">
@@ -66,11 +66,17 @@
 
 <p align="center"><sub>段位主色 / 鎏金连胜 / 红黑连败 / 徽章与 2.4s 同频呼吸</sub></p>
 
+### 5. 状态页
+
 <p align="center">
-  <img src="docs/images/obs-scene.png" width="1000" alt="OBS 场景示意：420×120 浏览器源">
+  <img src="docs/images/status-page.png" width="720" alt="辐能状态页">
 </p>
 
-<p align="center"><sub>OBS 场景示意 · 浏览器源 420 × 120 · 实机画面：Riot Games / <a href="https://wiki.playvalorant.com/en-us/File:Gameplay_1.jpeg">VALORANT Wiki</a> · 仅作 UI 合成示意</sub></p>
+<p align="center"><sub>本机状态页：辐能 · 500 分 · 3 连胜 · 今日 3 胜 / 1 负</sub></p>
+
+<blockquote>
+<p><b>UI 细节</b>：段位主色会跟着段位变化（神话为粉红、辐能为金色），再叠加上一局胜负色（连胜鎏金、连败红黑）；连胜/连败徽章和整卡呼吸同频，达到 2 场才触发。</p>
+</blockquote>
 
 ## 特性
 
