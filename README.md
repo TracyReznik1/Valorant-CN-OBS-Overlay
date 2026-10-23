@@ -146,7 +146,13 @@ OBS → **来源** → **+** → **浏览器**：
 
 状态页只读取本机缓存，不会额外请求掌瓦。运行中登录失效时不会自动弹二维码，需要手动点“重新登录”。
 
-## 数据与隐私
+## 安全与隐私
+
+<p align="center">
+  <img src="docs/images/security.png" width="1000" alt="安全效果图：凭证加密、仅本机监听、数据最小化">
+</p>
+
+<p align="center"><sub>凭证本机加密 · 仅监听 127.0.0.1 · /api/state 不含 Token · 支持 --reset-login 清除</sub></p>
 
 - **Windows**：<code>%LOCALAPPDATA%\ValorantCNOverlay\credentials.bin</code>，使用 **DPAPI** 加密。
 - **macOS**：<code>~/Library/Application Support/ValorantCNOverlay/credentials.bin</code>，使用 **AES-GCM** 加密；密钥优先放在 Keychain。
