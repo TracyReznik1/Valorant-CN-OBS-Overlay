@@ -5,7 +5,8 @@
 <h1 align="center">VALORANT CN OBS OVERLAY</h1>
 
 <p align="center">
-  <b>国服《无畏契约》段位直播 HUD</b><br>
+  <b>给主播的段位直播 HUD</b><br>
+  粉丝不用再问，战绩一眼看到<br>
   Windows 10/11 · macOS 12+ · OBS Browser Source
 </p>
 
@@ -24,6 +25,16 @@
 > 非官方社区工具，与 Riot Games、腾讯及《无畏契约》官方无隶属关系。掌瓦接口为非公开接口，官方更新后可能失效。
 
 ---
+
+## 00 / WHY
+
+<p align="center">
+  <img src="docs/images/streamer-usecase.png" width="1000" alt="主播直播场景：粉丝问段位和战绩，Overlay 直接显示答案">
+</p>
+
+<p align="center"><sub>粉丝：什么段位？今天几胜？上一局加多少？→ Overlay：一眼看到</sub></p>
+
+**不切屏、不报分、不重复回答。** 段位、RR、今日战绩、上一局变化、连胜/连败，全部挂在直播画面上；OBS 自动刷新。
 
 ## 01 / LIVE HUD
 
