@@ -269,7 +269,44 @@ go build -trimpath -ldflags "-s -w -X main.version=1.1.0" -o ValorantCNOverlay.e
 
 GitHub Actions 运行测试并产出 Windows / macOS ZIP；<code>v*</code> tag 创建 Release。
 
-## 11 / DOCS & LICENSE
+## 11 / ABOUT
+
+**Valorant CN OBS Overlay** 是给国服《无畏契约》主播、解说和内容创作者用的本地直播 HUD。
+
+直播时粉丝最常问三件事：**现在什么段位？今天赢了几把？上一局加了多少分？** 这个项目把这些答案直接挂在 OBS 画面上，主播不用切屏、不用反复报分，粉丝一眼就能看到。
+
+### 它做什么
+
+- QQ 扫码登录掌上无畏契约；
+- 本机读取段位、RR、今日战绩、上一局变化、当前连胜/连败；
+- 420×120 浏览器源，透明背景，OBS 直接叠加；
+- 游戏内段位图标、段位主色、胜负色、鎏金/红黑呼吸动画；
+- 30 秒后台刷新，带状态页、诊断和显式重新登录；
+- Windows DPAPI 或 macOS Keychain + AES-GCM，本地 <code>127.0.0.1</code> 服务。
+
+### 它不是什么
+
+- 不是 Riot Games / 腾讯官方工具，与官方无隶属关系；
+- 不提供代练、上分、自动操作游戏；
+- 不绕过游戏安全机制；
+- 不把战绩、凭证上传到第三方服务器；
+- 不保证非公开掌瓦接口永久可用。
+
+### 适合谁
+
+- 国服《无畏契约》主播、赛事解说、内容创作者；
+- 想让粉丝一眼看到段位和战绩，减少重复提问；
+- Windows 10/11 或 macOS 12+ 本机直播环境。
+
+### 当前限制
+
+- 掌瓦接口为非公开接口，官方更新后可能失效；
+- 发布包没有 Windows 签名 / macOS notarization；
+- 高段位和特殊账号样本有限；
+- 上一局与连胜/连败只统计本次软件启动后的竞技对局；
+- macOS Intel 只做交叉构建，未在 Intel 实机验证。
+
+## 12 / DOCS & LICENSE
 
 - [RR 解析与诊断](docs/rr-diagnostics.md)
 - [v1.1.0 发布说明](docs/releases/v1.1.0.md)
