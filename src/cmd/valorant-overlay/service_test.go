@@ -3,7 +3,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -228,6 +231,130 @@ func TestUnknownNumericRankIsDiagnosed(t *testing.T) {
 	}
 	if got.Rank != "--" || !strings.Contains(got.Warning, "[rank_parse]") {
 		t.Fatalf("numeric rank was guessed: %+v", got)
+	}
+}
+
+func TestCardFirstPromotionAndDemotionUpdatesPublicSnapshot(t *testing.T) {
+	svc, fp := testRefreshService(t)
+	pc := mapValue(anyList(mapValue(fp.role)["list"])[1])
+	now := svc.now()
+	svc.Now = func() time.Time { return now }
+	handler := NewOverlayHandler(svc.State)
+	var previous OverlaySnapshot
+	for _, tc := range []struct {
+		name       string
+		roleRank   string
+		roleRR     int
+		cardTitle  string
+		wantRank   string
+		wantRR     string
+		wins       int
+		losses     int
+		lastChange int
+		wantChange string
+		lastResult string
+	}{
+		{"initial", "神话III", 350, "神话III 350分", "神话III", "350", 1, 1, 22, "+22", "胜利"},
+		{"promotionDespiteOldRole", "神话III", 350, "辐能战魂 1250分", "辐能战魂", "1250", 2, 1, 25, "+25", "胜利"},
+		// Keep the same high RR while changing only the explicit card rank:
+		// neither the previous snapshot nor a points threshold may decide rank.
+		{"demotionDespiteOldRole", "辐能战魂", 1250, "神话III 1250分", "神话III", "1250", 2, 2, -18, "-18", "失败"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now = now.Add(time.Minute)
+			pc["tier_text"], pc["league_point"] = tc.roleRank, tc.roleRR
+			fp.card = valCardTitle(tc.cardTitle)
+			// Deliberately misleading card fields must not replace career data.
+			fp.card.(map[string]any)["today_wins"] = 99
+			fp.card.(map[string]any)["competitive_point_change"] = 99
+			items := []any{map[string]any{"game_enum": "competitive", "result_title": tc.lastResult, "ts": now.Unix(), "competitive_tier": map[string]any{"competitive_point_change": tc.lastChange}}}
+			wins, losses := tc.wins, tc.losses
+			if tc.lastResult == "胜利" {
+				wins--
+			} else {
+				losses--
+			}
+			for i := 0; i < wins; i++ {
+				items = append(items, map[string]any{"game_enum": "competitive", "result_title": "胜利", "ts": now.Add(-time.Minute).Unix()})
+			}
+			for i := 0; i < losses; i++ {
+				items = append(items, map[string]any{"game_enum": "competitive", "result_title": "失败", "ts": now.Add(-time.Minute).Unix()})
+			}
+			fp.pages[1] = map[string]any{"battle_list": items}
+			got, err := svc.RefreshOnce()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Rank != tc.wantRank || got.RR != tc.wantRR || got.RRSource != "source[1].card.left_data.title" {
+				t.Fatalf("card rank/RR not selected: %+v", got)
+			}
+			if got.TodayWins != tc.wins || got.TodayLosses != tc.losses || got.LastRRChange != tc.wantChange || got.LastResult != tc.lastResult {
+				t.Fatalf("career data not preserved: %+v", got)
+			}
+			if got.Stale || got.Warning != "" || got.Error != "" || got.UpdatedAt != now.Format(time.RFC3339) || got == previous {
+				t.Fatalf("snapshot not replaced by successful refresh: %+v", got)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+			var exposed OverlaySnapshot
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("state HTTP status %d", recorder.Code)
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &exposed); err != nil {
+				t.Fatal(err)
+			}
+			if exposed != got || svc.State.Get() != got {
+				t.Fatal("public or cached state differs from refreshed snapshot")
+			}
+			previous = got
+		})
+	}
+	if fp.loginCalls != 1 {
+		t.Fatalf("valid cached login was not reused: %d logins", fp.loginCalls)
+	}
+}
+
+func TestCardFirstFallbacksAndMissingValues(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		roleRank   string
+		roleRR     any
+		card       any
+		wantRank   string
+		wantRR     string
+		wantSource string
+		warnings   []string
+	}{
+		{"cardZero", "神话III", 350, valCardTitle("神话III 0分"), "神话III", "0", "source[1].card.left_data.title", nil},
+		{"missingCardFields", "神话III", 350, map[string]any{}, "神话III", "350", "source[0].league_point", nil},
+		{"invalidCardFields", "神话III", 350, map[string]any{"league_point": -1, "card": map[string]any{"left_data": map[string]any{"title": "暂无段位信息"}}}, "神话III", "350", "source[0].league_point", nil},
+		{"rankFallsBackIndependently", "神话III", 350, map[string]any{"league_point": 0}, "神话III", "0", "source[1].league_point", nil},
+		{"rrFallsBackIndependently", "神话III", 350, valCardTitle("辐能战魂"), "辐能战魂", "350", "source[0].league_point", nil},
+		{"bothMissing", "", nil, map[string]any{}, "--", "--", "", []string{"[rank_parse]", "[rr_parse]"}},
+		{"bothInvalid", "invalid", -1, map[string]any{"league_point": "invalid"}, "--", "--", "", []string{"[rank_parse]", "[rr_parse]"}},
+		{"unrankedWithoutRR", "神话III", nil, valCardTitle("未定级"), "未定级", "--", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, fp := testRefreshService(t)
+			pc := mapValue(anyList(mapValue(fp.role)["list"])[1])
+			pc["tier_text"], pc["league_point"] = tc.roleRank, tc.roleRR
+			fp.card = tc.card
+			got, err := svc.RefreshOnce()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Rank != tc.wantRank || got.RR != tc.wantRR || got.RRSource != tc.wantSource || got.Stale || got.Error != "" {
+				t.Fatalf("unexpected fallback state: %+v", got)
+			}
+			if len(tc.warnings) == 0 && got.Warning != "" {
+				t.Fatalf("valid fallback unexpectedly warned: %+v", got)
+			}
+			for _, warning := range tc.warnings {
+				if !strings.Contains(got.Warning, warning) {
+					t.Fatalf("missing %s warning: %+v", warning, got)
+				}
+			}
+		})
 	}
 }
 

@@ -235,17 +235,19 @@ func validRankName(value any) string {
 }
 
 func extractCurrentRank(role RoleSnapshot, card any) string {
+	// Prefer the card's explicit display name: the main-role profile can lag
+	// behind a promotion or demotion while the card already shows the new rank.
+	left := mapValue(mapValue(mapValue(card)["card"])["left_data"])
+	title, _ := left["title"].(string)
+	if match := rankTitleRE.FindStringSubmatch(strings.TrimSpace(title)); len(match) > 1 {
+		return validRankName(match[1])
+	}
 	// tier can be an enum (observed: 255 for this unranked account), not a
 	// display name. Never guess its mapping from a number alone.
 	for _, value := range []any{role.Raw["tier_text"], role.Raw["tier"], role.TierText} {
 		if name := validRankName(value); name != "" {
 			return name
 		}
-	}
-	left := mapValue(mapValue(mapValue(card)["card"])["left_data"])
-	title, _ := left["title"].(string)
-	if match := rankTitleRE.FindStringSubmatch(strings.TrimSpace(title)); len(match) > 1 {
-		return validRankName(match[1])
 	}
 	return ""
 }
@@ -483,11 +485,24 @@ func extractCurrentRR(sources ...any) string {
 	return rr
 }
 
+func extractCardFirstRRWithSource(role RoleSnapshot, card any) (string, string) {
+	// Keep the public source indices stable (0 = selected role, 1 = card),
+	// but exhaust valid card values before considering the role's fallback.
+	if rr, source := extractRRFromScopes(currentRRScopes(card, 1)); rr != "" {
+		return rr, source
+	}
+	return extractRRFromScopes(currentRRScopes(role.Raw, 0))
+}
+
 func extractCurrentRRWithSource(sources ...any) (string, string) {
 	var scopes []rrScope
 	for i, src := range sources {
 		scopes = append(scopes, currentRRScopes(src, i)...)
 	}
+	return extractRRFromScopes(scopes)
+}
+
+func extractRRFromScopes(scopes []rrScope) (string, string) {
 	// Preserve the existing structured-field precedence, but only in known
 	// current-player scopes. Invalid values must not block a valid fallback.
 	for _, scope := range scopes {

@@ -115,7 +115,7 @@ func (s *OverlayService) refreshInner() (OverlaySnapshot, error) {
 	latest := findLatestCompetitiveMatch(matches)
 	summary := summarizeToday(matches, s.now())
 	rank := extractCurrentRank(role, card)
-	rr, rrSource := extractCurrentRRWithSource(role.Raw, card)
+	rr, rrSource := extractCardFirstRRWithSource(role, card)
 	warning := ""
 	if rr == "" {
 		rr = "--"

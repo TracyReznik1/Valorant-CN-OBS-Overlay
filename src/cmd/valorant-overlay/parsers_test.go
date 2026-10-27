@@ -24,7 +24,10 @@ func TestExtractCurrentRank(t *testing.T) {
 		// tier_text is empty, tier is numeric 255, card says unranked/0 points.
 		{"observedUnrankedEnum", map[string]any{"tier_text": "", "tier": 255.0}, "未定级 0分", "未定级"},
 		{"stringEnum", map[string]any{"tier_text": "255", "tier": "255"}, "未定级0分", "未定级"},
-		{"namedRole", map[string]any{"tier_text": "铂金I", "tier": 255.0}, "神话II 350分", "铂金I"},
+		{"namedRole", map[string]any{"tier_text": "铂金I", "tier": 255.0}, "神话II 350分", "神话II"},
+		{"promotedCardOverridesOldRole", map[string]any{"tier_text": "神话III"}, "辐能战魂 1250分", "辐能战魂"},
+		{"demotedCardOverridesOldRole", map[string]any{"tier_text": "辐能战魂"}, "神话III 1250分", "神话III"},
+		{"invalidCardFallsBackToRole", map[string]any{"tier_text": "神话III"}, "暂无段位信息", "神话III"},
 		{"namedAlias", map[string]any{"tier_text": "255", "tier": "神话II"}, "", "神话II"},
 		{"missingRole", map[string]any{}, "辐能战魂 1250分", "辐能战魂"},
 		{"pointsNotDivision", map[string]any{}, "神话350分", "神话"},
@@ -141,6 +144,38 @@ func TestCurrentRRPrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := extractCurrentRR(tc.srcs...); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCardFirstRRWithSource(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		role       map[string]any
+		card       any
+		want       string
+		wantSource string
+	}{
+		{"cardTextBeforeRoleNumber", map[string]any{"league_point": 350}, valCardTitle("辐能战魂 1250分"), "1250", "source[1].card.left_data.title"},
+		{"cardNumberBeforeRoleNumber", map[string]any{"league_point": 350}, map[string]any{"league_point": 1250}, "1250", "source[1].league_point"},
+		{"cardTextZeroIsValid", map[string]any{"league_point": 350}, valCardTitle("神话III 0分"), "0", "source[1].card.left_data.title"},
+		{"cardNumberZeroIsValid", map[string]any{"league_point": 350}, map[string]any{"card": map[string]any{"left_data": map[string]any{"rr": 0}}}, "0", "source[1].card.left_data.rr"},
+		{"cardProgressBeforeRoleNumber", map[string]any{"league_point": 350}, valCardTitle("铂金I 82/100"), "82", "source[1].card.left_data.title"},
+		{"cardProgressZeroIsValid", map[string]any{"league_point": 350}, valCardTitle("铂金I 0/100"), "0", "source[1].card.left_data.title"},
+		{"invalidCardNumberAllowsCardText", map[string]any{"league_point": 350}, map[string]any{"league_point": -1, "card": map[string]any{"left_data": map[string]any{"title": "辐能战魂 1250 RR"}}}, "1250", "source[1].card.left_data.title"},
+		{"missingCardFallsBackToRoleNumber", map[string]any{"league_point": 350}, nil, "350", "source[0].league_point"},
+		{"invalidCardFallsBackToRoleNumber", map[string]any{"league_point": 350}, map[string]any{"league_point": "invalid"}, "350", "source[0].league_point"},
+		{"invalidCardFallsBackToRoleText", map[string]any{"rank_detail": "神话III 350 RR"}, valCardTitle("暂无积分"), "350", "source[0].rank_detail"},
+		{"roleZeroIsValidFallback", map[string]any{"league_point": 0}, valCardTitle("暂无积分"), "0", "source[0].league_point"},
+		{"cardHistoryIsNotCurrentRR", map[string]any{"league_point": 350}, map[string]any{"history": map[string]any{"rr": 1250}}, "350", "source[0].league_point"},
+		{"bothMissing", map[string]any{}, map[string]any{}, "", ""},
+		{"bothInvalid", map[string]any{"league_point": -1}, valCardTitle("神话III -18分"), "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, source := extractCardFirstRRWithSource(RoleSnapshot{Raw: tc.role}, tc.card)
+			if got != tc.want || source != tc.wantSource {
+				t.Fatalf("RR=%q source=%q, want %q/%q", got, source, tc.want, tc.wantSource)
 			}
 		})
 	}
